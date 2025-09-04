@@ -1,0 +1,120 @@
+# Based on https://wiki.freeradius.org/guide/eduroam as of 2025-03-15
+# Modified so anything starting with FR_ is automagically set based on container env vars
+# Also made VLAN assignment optional, as it's a best practice but not strictly necessary
+
+# The "domain" part (realm) of your users' fully-qualified usernames.
+# You must register this with your NRO or they won't forward your own roaming users'
+# auth requests back to this server.
+operator_name = "FR_IDP_REALM"
+
+# The VLAN to assign eduroam visitors (if applicable)
+eduroam_visitors_vlan = "FR_VLAN_VISITORS"
+
+# The VLAN to assign your students/staff (if applicable)
+eduroam_own_vlan = "FR_VLAN_OWNUSERS"
+
+server eduroam {
+        listen {
+                type = auth
+                ipaddr = *
+                port = 1812
+        }
+
+        authorize {
+                # Create a Correlation-ID to help us find things in the logs later
+                # This is done with the built-in (and safe to use) Tmp-String-0
+                if (!control:Tmp-String-0) {
+                        update control {
+                                Tmp-String-0 := "%{rand:100000}-%l"
+                        }
+                }
+
+                # Log requests before we change them
+                linelog_recv_request
+
+                # split_username_nai is a policy in the default distribution to
+                # split a username into username and domain.  We reject user-name
+                # strings without domains, as they're not routable.
+                split_username_nai
+                if (noop || !&Stripped-User-Domain) {
+                        reject
+                }
+
+                # Send the request to the NRO for your region.
+                # The details of the FLRs (Federation Level RADIUS servers)
+                # are in proxy.conf.
+                # You can make this condition as complex as you like, to
+                # include additional subdomains just concatenate the conditions
+                # with &&.
+                if (&Stripped-User-Domain != "${operator_name}") {
+                        update {
+                                control:Load-Balance-Key := &Calling-Station-ID
+                                control:Proxy-To-Realm := 'eduroam_flr'
+
+                                # Operator name (RFC 5580) identifies the network the
+                                # request originated from. It's not absolutely necessary
+                                # but it helps with debugging.
+                                request:Operator-Name := "1${operator_name}"
+                        }
+                        return
+                }
+
+                # If the EAP module returns 'ok' or 'updated', it means it has handled
+                # the request and we don't need to call any other modules in this
+                # section.
+                eap {
+                        ok = return
+                        updated = return
+                }
+        }
+
+        pre-proxy {
+                attr_filter.pre-proxy
+                linelog_send_proxy_request
+        }
+
+        post-proxy {
+                attr_filter.post-proxy
+                linelog_recv_proxy_response
+        }
+
+        authenticate {
+                eap
+        }
+
+        post-auth {
+		# (optionally) separate visitors' and own users' traffic to different VLANs
+		# automatically set to "true" or "false" by entrypoint script
+		if ("FR_VLAN_TOGGLE" == "true"){
+			update reply {
+				Tunnel-Type := VLAN
+				Tunnel-Medium-Type := IEEE-802
+			}
+			if (&control:Proxy-To-Realm) {
+				update reply {
+					Tunnel-Private-Group-ID = ${eduroam_visitors_vlan}
+				}
+			}
+			else {
+				update reply {
+					Tunnel-Private-Group-ID = ${eduroam_own_vlan}
+				}
+			}
+		}
+
+                # We're sending a response to one of OUR network devices for one of
+                # OUR users so provide it with the real user-identity.
+                if (&session-state:Stripped-User-Name) {
+                        update reply {
+                                User-Name := "%{session-state:Stripped-User-Name}@%{Stripped-User-Domain}"
+                        }
+                }
+
+                linelog_send_accept
+
+                Post-Auth-Type REJECT {
+                        attr_filter.access_reject
+                        linelog_send_reject
+                }
+        }
+}

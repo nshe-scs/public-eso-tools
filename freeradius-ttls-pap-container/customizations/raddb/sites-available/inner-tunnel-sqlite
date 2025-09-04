@@ -1,0 +1,56 @@
+# Based on https://wiki.freeradius.org/guide/eduroam
+# Modified so anything starting with FR_ is automagically set based on container env vars
+# Only link this config if using sqlite (all ldap references removed)
+
+server eduroam-inner {
+        listen {
+                type = auth
+                ipaddr = *
+                port = 18120 # Used for testing only.  Requests proxied internally.
+        }
+
+        authorize {
+                # Reuse outer server's Correlation-ID
+                if (&outer.control:Tmp-String-0) {
+                        update control {
+                               Tmp-String-0 := &outer.control:Tmp-String-0
+                        }
+                } else {
+                        update control {
+                               Tmp-String-0 := "%{rand:100000}-%l"
+                        }
+                }
+                # The outer username is considered garbage for authz purposes, but
+                # the domain portion of the outer and inner identities must match.
+                split_username_nai
+                if (noop || (&Stripped-User-Domain && \
+                    (&outer.Stripped-User-Domain != &Stripped-User-Domain))) {
+                        reject
+                }
+
+                # Make the user's real identity available to anything that needs
+                # it in the outer server.
+                if (&outer.session-state:){
+                        update {
+                                &outer.session-state:Stripped-User-Name := &Stripped-User-Name
+                        }
+                }
+
+                files # strictly for debugging
+		sql
+                pap
+        }
+
+        authenticate {
+                pap
+        }
+
+	# Logging
+	post-auth {
+	    linelog_send_accept
+
+	    Post-Auth-Type REJECT {
+		linelog_send_reject
+	    }
+	}
+}

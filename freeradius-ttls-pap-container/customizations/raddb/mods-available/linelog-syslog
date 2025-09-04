@@ -1,0 +1,48 @@
+# Be thoughtful in the details we log, instead of just logging every attribute pair for every
+# part of a conversation. We need to retain 90 days of logs for eduroam troubleshooting and
+# investigation. We use a made-up "Correlation-ID" to make logs a little easier to follow.
+# Entrypoint script determines whether to log via syslog or to a (persistent) file accessible
+# outside the container. We omit timestamps for syslog messages, relying on syslog-ng config.
+#
+# Reminder: Tmp-String-0 is a pseudo-random correlation ID defined in the authorize{} block of
+# the default and inner-tunnel site configs.
+
+linelog linelog_recv_request {
+    filename = syslog
+    syslog_facility = FR_LOG_SYSLOG_FAC
+    syslog_severity = FR_LOG_SYSLOG_SEV
+    format = "action=Recv-%{Packet-Type}, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, NAS-IP-Address=%{NAS-IP-Address}, Client-IP-Address=%{Client-IP-Address}, Calling-Station-Id=%{Calling-Station-Id}, NAS-Identifier=%{NAS-Identifier}, Operator-Name=%{Operator-Name}"
+}
+
+linelog linelog_send_accept {
+    filename = syslog
+    syslog_facility = FR_LOG_SYSLOG_FAC
+    syslog_severity = FR_LOG_SYSLOG_SEV
+    format = "action=Send-%{reply:Packet-Type}, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, Stripped-User-Name=%{Stripped-User-Name}, Stripped-User-Domain=%{Stripped-User-Domain}, Calling-Station-Id=%{Calling-Station-Id}, NAS-IP-Address=%{NAS-IP-Address}, Client-IP-Address=%{Client-IP-Address}, Reply-Message=%{reply:Reply-Message}, Auth-Type=%{Auth-Type}, EAP-Type=%{EAP-Type}"
+}
+
+linelog linelog_send_reject {
+    filename = syslog
+    syslog_facility = FR_LOG_SYSLOG_FAC
+    syslog_severity = FR_LOG_SYSLOG_SEV
+    format = "action=Send-%{reply:Packet-Type}, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, Stripped-User-Name=%{Stripped-User-Name}, Stripped-User-Domain=%{Stripped-User-Domain}, Calling-Station-Id=%{Calling-Station-Id}, NAS-IP-Address=%{NAS-IP-Address}, Client-IP-Address=%{Client-IP-Address}, Reply-Message=%{reply:Reply-Message}, Auth-Type=%{Auth-Type}, EAP-Type=%{EAP-Type}, Proxy-To-Realm=%{Proxy-To-Realm}, Operator-Name=%{Operator-Name}, Module-Failure=%{Module-Failure-Message}"
+}
+
+linelog linelog_send_proxy_request {
+    filename = syslog
+    syslog_facility = FR_LOG_SYSLOG_FAC
+    syslog_severity = FR_LOG_SYSLOG_SEV
+    format = "action=Send-Proxy-Request, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, Stripped-User-Domain=%{Stripped-User-Domain}, Realm=%{Realm}, Proxy-To-Realm=%{Proxy-To-Realm}, Calling-Station-Id=%{Calling-Station-Id}, NAS-IP-Address=%{NAS-IP-Address}, Client-IP-Address=%{Client-IP-Address}"
+}
+
+linelog linelog_recv_proxy_response {
+    filename = syslog
+    syslog_facility = FR_LOG_SYSLOG_FAC
+    syslog_severity = FR_LOG_SYSLOG_SEV
+    reference = "%{proxy-reply:Response-Packet-Type}"
+    messages {
+        Access-Accept = "action=Recv-Proxy-Accept, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, Calling-Station-Id=%{Calling-Station-Id}, %{pairs:proxy-reply:}"
+        Access-Reject = "action=Recv-Proxy-Reject, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, Calling-Station-Id=%{Calling-Station-Id}, %{pairs:proxy-reply:}, Module-Failure=%{Module-Failure-Message}"
+        Access-Challenge = "action=Recv-Proxy-Challenge, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, Calling-Station-Id=%{Calling-Station-Id}, %{pairs:proxy-reply:}"
+    }
+}

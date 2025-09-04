@@ -1,0 +1,28 @@
+# Example basic docker-compose.yml, should be adaptable to other tools if needed.
+# Be sure to edit custom.env!
+
+services:
+  freeradius:
+    container_name: fr-ttls-pap
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: fr-ttls-pap
+    ports:
+      # map traditional radius ports to arbitrary port numbers
+      # Change the defaults below to the next available two udp ports you aren't already using.
+      # Generally safe to work in 49152-65535 since that's the "private" / dynamic high port range
+      # A reverse proxy like traefik, k8s, etc. can also solve this for you and let you stick with 1812-1813...
+      # We specify 0.0.0.0 to prevent binding to ipv6, but you don't have to
+      - "0.0.0.0:50000-50001:1812-1813/udp"
+    environment:
+      TZ: 'America/Los_Angeles'
+    # You must modify the values in custom.env; see README for more info
+    env_file: ./custom.env
+    volumes:
+      # Persist this if you're using sqlite instead of an external auth source:
+      - './vols/sqlite/:/db'
+      # Persist this if you aren't shipping syslogs to another host (syslog is best):
+      - './vols/log/:/var/log/freeradius/eduroam.log'
+    # Use "no" to avoid a boot loop if you're still testing, otherwise use unless-stopped 
+    restart: "no"

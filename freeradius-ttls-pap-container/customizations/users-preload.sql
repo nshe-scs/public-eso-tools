@@ -1,0 +1,4 @@
+-- Intentionally blank; append lines if you'd like to pre-populate the container's sqlite DB with
+-- users at build time. If you used a persistent volume, you can ignore this file and manage the
+-- DB after building (e.g. using the sqlite3 command outside of the container). Sample SQL:
+-- INSERT INTO radcheck (username, attribute, op, value) values("eduroam-test@example.org", "Cleartext-Password", ":=", "What an AMAZING password!");

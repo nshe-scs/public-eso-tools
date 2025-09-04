@@ -1,0 +1,77 @@
+# Modified so anything starting with FR_ is automagically set based on container env vars
+# Designed for use with Microsoft Active Directory - securely bind as a user, then send
+# the client credentials in cleartext. This avoids NTLM and MSCHAPv2 which have long been
+# rumored to be on the chopping block. However, it's (still) critical that we speak LDAP over
+# an encrypted connection to AD, i.e. either LDAPS (636) or LDAP + StartTLS (389).
+#
+# More information:
+#  https://www.freeradius.org/documentation/freeradius-server/3.2.8/concepts/modules/ldap/authentication.html
+#
+# This mod is called if the container's environment specified to use group matching, not user matching
+
+ldap {
+	# You can specify multiple servers by setting server multiple times:
+	server = 'FR_LDAP_HOST_FQDN_1'
+	server = 'FR_LDAP_HOST_FQDN_2'
+
+	# Port 389 is LDAP, 636 is LDAPS.
+	port = FR_LDAP_SEC_PORT
+
+	# Bind user credentials
+	identity = 'FR_LDAP_BIND_USER'
+	password = 'FR_LDAP_BIND_PASS'
+
+	# dn from which all searches will start
+	base_dn = 'FR_LDAP_BASEDN'
+
+        # DN of group the users must be in for access
+        group_dn = 'FR_LDAP_GROUP_DN'
+
+	#  Name of the attribute that contains the user DN.
+	#  The default name is LDAP-UserDn.
+	user_dn = "LDAP-UserDn"
+
+	# User lookups
+	user {
+		#  Where to start searching in the tree for users
+		base_dn = "${..base_dn}"
+
+		# Find the user, but only if they're in the group FR_LDAP_GROUP_DN
+		filter = "(&(objectClass=user)(sAMAccountName=%{%{Stripped-User-Name}:-%{User-Name}})(memberOf:1.2.840.113556.1.4.1941:=${..group_dn}))"
+		scope = 'sub'
+		access_positive = yes
+	}
+
+	options {
+		chase_referrals = yes
+		rebind = yes
+		res_timeout = 10
+		srv_timelimit = 3
+		net_timeout = 1
+		idle = 60
+		probes = 3
+		interval = 3
+		ldap_debug = FR_LDAP_DEBUG_LVL
+	}
+
+	tls {
+		start_tls = FR_LDAP_SEC_STLS_TOGGLE
+		ca_file	= ${certdir}/ldap_cacert.pem
+		require_cert	= "demand"
+		tls_min_version = "1.2"
+		tls_max_version = "1.3"
+		cipher_list = "DEFAULT"
+	}
+
+	pool {
+		start = ${thread[pool].start_servers}
+		min = ${thread[pool].min_spare_servers}
+		max = ${thread[pool].max_servers}
+		spare = ${thread[pool].max_spare_servers}
+		uses = 0
+		retry_delay = 30
+		lifetime = 0
+		idle_timeout = 60
+		max_retries = 5
+	}
+}
