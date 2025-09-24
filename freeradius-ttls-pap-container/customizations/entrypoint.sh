@@ -188,11 +188,11 @@ if [ -n "$FR_LDAP_SECURITY" ]; then
     exit 1
   fi
 
-  # Set LDAP debug level: 0x0000: none, 0x0028: default, 0xFFFF: everything
-  # If FR_DEBUG is set, crank up the LDAP debug level
+  # Set OpenLDAP debug level: 0x0000: none; 0x0108: CONNS+STATS; 0xFFFF: everything
+  # If FR_DEBUG is set, crank up the LDAP debug level but not too much
   if [ -n "$FR_DEBUG" ]; then
-    echo "DBG: FR_DEBUG specified, will use incredibly verbose LDAP logging..."
-    FR_LDAP_DEBUG_LVL=0xFFFF
+    echo "DBG: FR_DEBUG specified, will use verbose LDAP logging..."
+    FR_LDAP_DEBUG_LVL=0x0108
   else
     FR_LDAP_DEBUG_LVL=0x0000
   fi
@@ -266,6 +266,15 @@ fi
 
 ## Set up logging
 if [ -n "$FR_LOG_DESTINATION" ]; then
+  # If FR_DEBUG is set, log more details than usual
+  if [ -n "$FR_DEBUG" ]; then
+    echo "DBG: FR_DEBUG specified, will log every received RADIUS packet..."
+    FR_VERBOSE_TOGGLE="true"
+  else
+    FR_VERBOSE_TOGGLE="false"
+  fi
+  replace_var_in_conf FR_VERBOSE_TOGGLE
+
   if [ "$FR_LOG_DESTINATION" = "syslog" ]; then
     echo "Setting up logging: syslog..."
 
@@ -321,6 +330,8 @@ else
   exit 1
 fi
 
+## Enable proxy rate limiting module
+ln -sf ../mods-available/proxy_rate_limit proxy_rate_limit
 
 ## entrypoint-cert-watchdog cleanup (to avoid orphaning the bg jobs)
 cleanup() {

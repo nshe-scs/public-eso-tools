@@ -4,22 +4,26 @@
 # Entrypoint script determines whether to log via syslog or to a (persistent) file accessible
 # outside the container.
 #
-# Reminder: Tmp-String-0 is a pseudo-random correlation ID defined in the authorize{} block of
-# the default and inner-tunnel site configs.
+# Reminders:
+# Tmp-String-0 is a pseudo-random correlation ID an the entire session, useful for grepping.
+# Tmp-String-1 is the inner-tunnel failure reason (e.g. why auth failed).
+# Tmp-Integer-0 is the timestamp of the first packet in the outer session (not logged).
+# Tmp-Integer-1 is the total elapsed time of the outer session, in ms.
+# Tmp-Integer-2 is the count of received packets in the outer session.
 
-linelog linelog_recv_request {
+linelog linelog_ratelimit{
     filename = /var/log/freeradius/eduroam.log
-    format = "%l action=Recv-%{Packet-Type}, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, NAS-IP-Address=%{NAS-IP-Address}, Client-IP-Address=%{Client-IP-Address}, Calling-Station-Id=%{Calling-Station-Id}, NAS-Identifier=%{NAS-Identifier}, Operator-Name=%{Operator-Name}"
+    format = "%l action=Rate-Limit-Reject, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, NAS-IP-Address=%{NAS-IP-Address}, Client-IP-Address=%{Client-IP-Address}, Calling-Station-Id=%{Calling-Station-Id}"
 }
 
 linelog linelog_send_accept {
     filename = /var/log/freeradius/eduroam.log
-    format = "%l action=Send-%{reply:Packet-Type}, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, Stripped-User-Name=%{Stripped-User-Name}, Stripped-User-Domain=%{Stripped-User-Domain}, Calling-Station-Id=%{Calling-Station-Id}, NAS-IP-Address=%{NAS-IP-Address}, Client-IP-Address=%{Client-IP-Address}, Reply-Message=%{reply:Reply-Message}, Auth-Type=%{Auth-Type}, EAP-Type=%{EAP-Type}"
+    format = "%l action=Send-%{reply:Packet-Type}, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, Stripped-User-Name=%{Stripped-User-Name}, Stripped-User-Domain=%{Stripped-User-Domain}, Calling-Station-Id=%{Calling-Station-Id}, NAS-IP-Address=%{NAS-IP-Address}, Client-IP-Address=%{Client-IP-Address}, Reply-Message=%{reply:Reply-Message}, Auth-Type=%{Auth-Type}, EAP-Type=%{EAP-Type}, Elapsed-Ms=%{session-state:Tmp-Integer-1}, Recv-Pkt-Count=%{session-state:Tmp-Integer-2}"
 }
 
 linelog linelog_send_reject {
     filename = /var/log/freeradius/eduroam.log
-    format = "%l action=Send-%{reply:Packet-Type}, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, Stripped-User-Name=%{Stripped-User-Name}, Stripped-User-Domain=%{Stripped-User-Domain}, Calling-Station-Id=%{Calling-Station-Id}, NAS-IP-Address=%{NAS-IP-Address}, Client-IP-Address=%{Client-IP-Address}, Reply-Message=%{reply:Reply-Message}, Auth-Type=%{Auth-Type}, EAP-Type=%{EAP-Type}, Proxy-To-Realm=%{Proxy-To-Realm}, Operator-Name=%{Operator-Name}, Module-Failure=%{Module-Failure-Message}"
+    format = "%l action=Send-%{reply:Packet-Type}, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, Stripped-User-Name=%{Stripped-User-Name}, Stripped-User-Domain=%{Stripped-User-Domain}, Calling-Station-Id=%{Calling-Station-Id}, NAS-IP-Address=%{NAS-IP-Address}, Client-IP-Address=%{Client-IP-Address}, Reply-Message=%{reply:Reply-Message}, Auth-Type=%{Auth-Type}, EAP-Type=%{EAP-Type}, Proxy-To-Realm=%{Proxy-To-Realm}, Operator-Name=%{Operator-Name}, Module-Failure=%{Module-Failure-Message}, Inner-Failure=%{session-state:Tmp-String-1}, Elapsed-Ms=%{session-state:Tmp-Integer-1}, Recv-Pkt-Count=%{session-state:Tmp-Integer-2}"
 }
 
 linelog linelog_send_proxy_request {
@@ -35,4 +39,10 @@ linelog linelog_recv_proxy_response {
         Access-Reject = "%l action=Recv-Proxy-Reject, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, Calling-Station-Id=%{Calling-Station-Id}, %{pairs:proxy-reply:}, Module-Failure=%{Module-Failure-Message}"
         Access-Challenge = "%l action=Recv-Proxy-Challenge, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, Calling-Station-Id=%{Calling-Station-Id}, %{pairs:proxy-reply:}"
     }
+}
+
+# Only used when debugging the container
+linelog linelog_recv_request {
+    filename = /var/log/freeradius/eduroam.log
+    format = "%l action=Recv-%{Packet-Type}, Correlation-ID=%{control:Tmp-String-0}, User-Name=%{User-Name}, NAS-IP-Address=%{NAS-IP-Address}, Client-IP-Address=%{Client-IP-Address}, Calling-Station-Id=%{Calling-Station-Id}, NAS-Identifier=%{NAS-Identifier}, Operator-Name=%{Operator-Name}"
 }

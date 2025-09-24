@@ -31,8 +31,8 @@ COPY customizations/syslog-ng.conf /etc/syslog-ng.conf
 COPY customizations/entrypoint.sh /entrypoint.sh
 RUN chmod a+x /entrypoint.sh
 
-# Standard radius auth + accounting ports (re-map as needed via your orchestration tool of choice)
-EXPOSE 1812 1813
+# Standard radius auth port (re-map as needed via your orchestration tool of choice); no accounting/1813
+EXPOSE 1812
 
 # Entrypoint script
 CMD ["/entrypoint.sh"]

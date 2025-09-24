@@ -1,6 +1,7 @@
 # Based on https://wiki.freeradius.org/guide/eduroam as of 2025-03-15
 # Modified so anything starting with FR_ is automagically set based on container env vars
 # Also made VLAN assignment optional, as it's a best practice but not strictly necessary
+# Various work is done here to condense outer + inner session details into fewer logs
 
 # The "domain" part (realm) of your users' fully-qualified usernames.
 # You must register this with your NRO or they won't forward your own roaming users'
@@ -18,19 +19,35 @@ server eduroam {
                 type = auth
                 ipaddr = *
                 port = 1812
+                # eduroam-US does not use accounting/1813, so we don't either
         }
 
         authorize {
-                # Create a Correlation-ID to help us find things in the logs later
-                # This is done with the built-in (and safe to use) Tmp-String-0
-                if (!control:Tmp-String-0) {
-                        update control {
+                # Some work just for the very first packet in the session:
+                # Store a session start timestamp (Tmp-Integer-0) so we can figure out
+                # the total elapsed session time (Tmp-Integer-1) later; and a random-ish
+                # Correlation-ID (Tmp-String-0) to help find things in the logs
+                if (!&session-state:Tmp-Integer-0) {
+                        update session-state {
+                                Tmp-Integer-0 := "%{expr:%c*1000 + %C/1000}"
                                 Tmp-String-0 := "%{rand:100000}-%l"
                         }
                 }
 
-                # Log requests before we change them
-                linelog_recv_request
+                # Copy Correlation-ID to control on every packet
+                update control {
+                        Tmp-String-0 := "%{session-state:Tmp-String-0}"
+                }
+
+                # Count packets (Tmp-Integer-2) for logging later at the final accept/reject
+                update session-state {
+                        Tmp-Integer-2 := "%{expr:%{%{session-state:Tmp-Integer-2}:-0} + 1}"
+                }
+
+                # Only log every received packet if debugging
+                if ("FR_VERBOSE_TOGGLE" == "true"){
+                        linelog_recv_request
+                }
 
                 # split_username_nai is a policy in the default distribution to
                 # split a username into username and domain.  We reject user-name
@@ -56,6 +73,13 @@ server eduroam {
                                 # but it helps with debugging.
                                 request:Operator-Name := "1${operator_name}"
                         }
+
+                        # Some clients aggressively retry, so be nice to your FLRs
+                        proxy_rate_limit
+                        if (reject) {
+                                linelog_ratelimit
+                        }
+
                         return
                 }
 
@@ -83,24 +107,23 @@ server eduroam {
         }
 
         post-auth {
-		# (optionally) separate visitors' and own users' traffic to different VLANs
-		# automatically set to "true" or "false" by entrypoint script
-		if ("FR_VLAN_TOGGLE" == "true"){
-			update reply {
-				Tunnel-Type := VLAN
-				Tunnel-Medium-Type := IEEE-802
-			}
-			if (&control:Proxy-To-Realm) {
-				update reply {
-					Tunnel-Private-Group-ID = ${eduroam_visitors_vlan}
-				}
-			}
-			else {
-				update reply {
-					Tunnel-Private-Group-ID = ${eduroam_own_vlan}
-				}
-			}
-		}
+                # Optionally set different VLANs for visitors and own users
+                if ("FR_VLAN_TOGGLE" == "true"){
+                        update reply {
+                                Tunnel-Type := VLAN
+                                Tunnel-Medium-Type := IEEE-802
+                        }
+                        if (&control:Proxy-To-Realm) {
+                                update reply {
+                                        Tunnel-Private-Group-ID = ${eduroam_visitors_vlan}
+                                }
+                        }
+                        else {
+                                update reply {
+                                        Tunnel-Private-Group-ID = ${eduroam_own_vlan}
+                                }
+                        }
+                }
 
                 # We're sending a response to one of OUR network devices for one of
                 # OUR users so provide it with the real user-identity.
@@ -108,6 +131,16 @@ server eduroam {
                         update reply {
                                 User-Name := "%{session-state:Stripped-User-Name}@%{Stripped-User-Domain}"
                         }
+                }
+
+                # Compute total elapsed time (Tmp-Integer-1) from first packet's timestamp, i.e.
+                # (now_milliseconds) - (first_packet_milliseconds)
+                # and if we somehow got here without a start timestamp:
+                # (now_milliseconds) - (now_milliseconds)
+                if (&session-state:Tmp-Integer-0){
+                        update session-state { Tmp-Integer-1 := "%{expr:(%c*1000 + %C/1000) - %{session-state:Tmp-Integer-0}}" }
+                } else {
+                        update session-state { Tmp-Integer-1 := 0 }
                 }
 
                 linelog_send_accept
