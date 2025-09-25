@@ -11,15 +11,12 @@ server eduroam-inner {
 
         authorize {
                 # Reuse outer server's Correlation-ID
-                if (&outer.control:Tmp-String-0) {
+                if (&outer.session-state:Tmp-String-0) {
                         update control {
-                               Tmp-String-0 := &outer.control:Tmp-String-0
-                        }
-                } else {
-                        update control {
-                               Tmp-String-0 := "%{rand:100000}-%l"
+                               Tmp-String-0 := &outer.session-state:Tmp-String-0
                         }
                 }
+
                 # The outer username is considered garbage for authz purposes, but
                 # the domain portion of the outer and inner identities must match.
                 split_username_nai
@@ -37,7 +34,7 @@ server eduroam-inner {
                 }
 
                 files # strictly for debugging
-		sql
+                sql
                 pap
         }
 
@@ -45,12 +42,24 @@ server eduroam-inner {
                 pap
         }
 
-	# Logging
-	post-auth {
-	    linelog_send_accept
+        # Logging
+        post-auth {
+                # Only log inner success if debugging
+                if ("FR_VERBOSE_TOGGLE" == "true"){
+                        linelog_send_accept
+                }
 
-	    Post-Auth-Type REJECT {
-		linelog_send_reject
-	    }
-	}
+                Post-Auth-Type REJECT {
+                        # Copy inner failure to the outer session for logging
+                        # Prefer Module-Failure-Message; fall back to Reply-Message; else a static string.
+                        update outer.session-state {
+                                Tmp-String-1 := "%{%{request:Module-Failure-Message}:-%{%{control:Module-Failure-Message}:-%{%{reply:Reply-Message}:-no reason provided}}}"
+                        }
+
+                        # Only log inner failure here if debugging
+                        if ("FR_VERBOSE_TOGGLE" == "true"){
+                                linelog_send_reject
+                        }
+                }
+        }
 }
