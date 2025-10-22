@@ -25,7 +25,7 @@ CN = eduroam Support Organization Root CA ($serial)
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always,issuer:always
 basicConstraints = critical,CA:TRUE
-keyUsage = keyCertSign,cRLSign
+keyUsage = critical,keyCertSign,cRLSign
 EOF
 
 # Generate a self-signed CA certificate using the ECDSA key
