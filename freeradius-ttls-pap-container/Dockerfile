@@ -4,8 +4,8 @@
 # (see README and custom.env).
 #
 # We add sqlite, a read-centric, in-memory, "serverless" flatfile database, to the freeradius container image
-# for use cases where there is no external secure LDAP identity store. Be sure to persist /db if you want to
-# manually inspect/update the local user DB even when the container isn't running.
+# for use cases where there is no external identity source. Be sure to persist /db if you want to manually
+# inspect/update the local user DB even when the container isn't running.
 
 # See https://hub.docker.com/r/freeradius/freeradius-server/
 FROM freeradius/freeradius-server:latest-3.2-alpine

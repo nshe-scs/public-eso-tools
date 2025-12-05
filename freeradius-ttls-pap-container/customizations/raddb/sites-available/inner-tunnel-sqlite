@@ -3,63 +3,99 @@
 # Only link this config if using sqlite (all ldap references removed)
 
 server eduroam-inner {
-        listen {
-                type = auth
-                ipaddr = *
-                port = 18120 # Used for testing only.  Requests proxied internally.
+    listen {
+        type = auth
+        ipaddr = *
+        port = 18120 # Used for testing only.  Requests proxied internally.
+    }
+
+    authorize {
+        # Reuse outer server's Correlation-ID
+        if (&outer.session-state:Tmp-String-0) {
+            update control {
+                Tmp-String-0 := &outer.session-state:Tmp-String-0
+            }
         }
 
-        authorize {
-                # Reuse outer server's Correlation-ID
-                if (&outer.session-state:Tmp-String-0) {
-                        update control {
-                               Tmp-String-0 := &outer.session-state:Tmp-String-0
-                        }
-                }
-
-                # The outer username is considered garbage for authz purposes, but
-                # the domain portion of the outer and inner identities must match.
-                split_username_nai
-                if (noop || (&Stripped-User-Domain && \
-                    (&outer.Stripped-User-Domain != &Stripped-User-Domain))) {
-                        reject
-                }
-
-                # Make the user's real identity available to anything that needs
-                # it in the outer server.
-                if (&outer.session-state:){
-                        update {
-                                &outer.session-state:Stripped-User-Name := &Stripped-User-Name
-                        }
-                }
-
-                files # strictly for debugging
-                sql
-                pap
+        # The outer username is considered garbage for authz purposes, but
+        # the domain portion of the outer and inner identities must match.
+        split_username_nai
+        if (noop || (&Stripped-User-Domain && \
+            (&outer.Stripped-User-Domain != &Stripped-User-Domain))) {
+            reject
         }
 
-        authenticate {
-                pap
+        # Make the user's real identity available to anything that needs
+        # it in the outer server.
+        if (&outer.session-state:){
+            update {
+                &outer.session-state:Stripped-User-Name := &Stripped-User-Name
+            }
         }
 
-        # Logging
-        post-auth {
-                # Only log inner success if debugging
-                if ("FR_VERBOSE_TOGGLE" == "true"){
-                        linelog_send_accept
-                }
-
-                Post-Auth-Type REJECT {
-                        # Copy inner failure to the outer session for logging
-                        # Prefer Module-Failure-Message; fall back to Reply-Message; else a static string.
-                        update outer.session-state {
-                                Tmp-String-1 := "%{%{request:Module-Failure-Message}:-%{%{control:Module-Failure-Message}:-%{%{reply:Reply-Message}:-no reason provided}}}"
-                        }
-
-                        # Only log inner failure here if debugging
-                        if ("FR_VERBOSE_TOGGLE" == "true"){
-                                linelog_send_reject
-                        }
-                }
+        # Probe cache; if we had a cache hit, note it in Tmp-String-3, then short-circuit out of here
+        update control { Cache-Status-Only := yes }
+        cache_auth
+        if (ok) {
+            update outer.session-state { Tmp-String-3 := "hit" }
+            update control { Cache-Status-Only := no }
+            cache_auth
+            if (&control:Tmp-String-2 == "accept") {
+                update control { Auth-Type := Accept }
+                return
+            }
+            if (&control:Tmp-String-2 == "reject") {
+                reject
+            }
         }
+
+        files # strictly for debugging
+        sql
+        pap
+    }
+
+    authenticate {
+        pap
+        # Handle cached accepts
+        Auth-Type Accept {
+            ok
+        }
+    }
+
+    # Logging and caching
+    post-auth {
+        # Update cache: success
+        if ("%{reply:Packet-Type}" == "Access-Accept") {
+            update control {
+                Tmp-String-2 := "accept"
+                Cache-TTL := 30
+            }
+            cache_auth
+
+            # Only log inner success if debugging
+            if ("FR_VERBOSE_TOGGLE" == "true"){
+                linelog_send_accept
+            }
+        }
+
+        Post-Auth-Type REJECT {
+            # Update cache: failure
+            update control {
+                Tmp-String-2 := "reject"
+                Cache-TTL := 10
+            }
+            cache_auth
+
+            # Copy inner failure to the outer session for logging
+            # Prefer Module-Failure-Message; fall back to Reply-Message; else a static string.
+            update outer.session-state {
+                Tmp-String-1 := "%{%{request:Module-Failure-Message}:-%{%{control:Module-Failure-Message}:-%{%{reply:Reply-Message}:-no reason provided}}}"
+            }
+
+            # Only log inner failure here if debugging
+            if ("FR_VERBOSE_TOGGLE" == "true"){
+                linelog_send_reject
+            }
+        }
+    }
 }

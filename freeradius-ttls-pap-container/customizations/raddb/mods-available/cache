@@ -1,0 +1,19 @@
+# Cache successes and failures to help reduce our own auth backend load from aggressive clients
+# using the two call caching method described at https://wiki.freeradius.org/modules/Rlm_cache
+
+cache cache_auth {
+    # Don't distribute caches via memcached or redis because that would un-simplify our container too much
+    driver = "rlm_cache_rbtree"
+
+    # Store as visited_sp|DEVICE_MAC|Inner_User@inner_realm with fallback options for a few fields
+    # This will help reduce the likelihood of a bad actor piggybacking off someone's successful auth
+    key = "%{tolower:%{%{outer.request:Operator-Name}:-%{%{outer.request:NAS-Identifier}:-%{%{outer.request:Client-IP-Address}:-unknown-sp}}}}|%{toupper:%{%{outer.request:Calling-Station-Id}:-%{Calling-Station-Id}}}|%{%{session-state:Stripped-User-Name}:-%{Stripped-User-Name}}@%{tolower:%{%{session-state:Stripped-User-Domain}:-%{Stripped-User-Domain}}}"
+
+    # Default TTL (seconds), but we can override it via Cache-TTL
+    ttl = 30
+
+    # Write/read an "accept" or "reject" in Tmp-String-2 when cache hits
+    update {
+        control:Tmp-String-2 := "%{control:Tmp-String-2}"
+    }
+}
