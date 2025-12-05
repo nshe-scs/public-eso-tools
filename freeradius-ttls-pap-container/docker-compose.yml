@@ -19,7 +19,7 @@ services:
       TZ: 'America/Los_Angeles'
     # You must modify the values in custom.env; see README for more info.
     env_file: ./custom.env
-    volumes:
+    #volumes:
       # Uncomment to persist this if you're using sqlite instead of an external auth source:
       #- './vols/sqlite/:/db'
       # Uncomment to persist this if you aren't shipping syslogs to another host (syslog is best):
