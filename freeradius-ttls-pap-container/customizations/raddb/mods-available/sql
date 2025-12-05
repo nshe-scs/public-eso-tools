@@ -1,45 +1,45 @@
 # Modified from the default to use sqlite at /db/freeradius.sqlite
 
 sql {
-        dialect = "sqlite"
-        driver = "rlm_sql_${dialect}"
+    dialect = "sqlite"
+    driver = "rlm_sql_${dialect}"
 
-        sqlite {
-                filename = "/db/freeradius.sqlite"
-                busy_timeout = 200
-#                bootstrap = "${modconfdir}/${..:name}/main/sqlite/schema.sql"
-        }
+    sqlite {
+        filename = "/db/freeradius.sqlite"
+        busy_timeout = 200
+#        bootstrap = "${modconfdir}/${..:name}/main/sqlite/schema.sql"
+    }
 
-        # Database table configuration for everything except Oracle
-        radius_db = "radius"
-        acct_table1 = "radacct"
-        acct_table2 = "radacct"
-        postauth_table = "radpostauth"
-        authcheck_table = "radcheck"
-        groupcheck_table = "radgroupcheck"
-        authreply_table = "radreply"
-        groupreply_table = "radgroupreply"
-        usergroup_table = "radusergroup"
+    # Database table configuration for everything except Oracle
+    radius_db = "radius"
+    acct_table1 = "radacct"
+    acct_table2 = "radacct"
+    postauth_table = "radpostauth"
+    authcheck_table = "radcheck"
+    groupcheck_table = "radgroupcheck"
+    authreply_table = "radreply"
+    groupreply_table = "radgroupreply"
+    usergroup_table = "radusergroup"
 
-        # Remove stale session if checkrad does not see a double login
-        delete_stale_sessions = yes
+    # Remove stale session if checkrad does not see a double login
+    delete_stale_sessions = yes
 
-        pool {
-                start = ${thread[pool].start_servers}
-                min = ${thread[pool].min_spare_servers}
-                max = ${thread[pool].max_servers}
-                spare = ${thread[pool].max_spare_servers}
-                uses = 0
-                retry_delay = 30
-                lifetime = 0
-                idle_timeout = 60
-                max_retries = 5
-        }
+    pool {
+        start = ${thread[pool].start_servers}
+        min = ${thread[pool].min_spare_servers}
+        max = ${thread[pool].max_servers}
+        spare = ${thread[pool].max_spare_servers}
+        uses = 0
+        retry_delay = 30
+        lifetime = 0
+        idle_timeout = 60
+        max_retries = 5
+    }
 
-        client_table = "nas"
+    client_table = "nas"
 
-        group_attribute = "SQL-Group"
+    group_attribute = "SQL-Group"
 
-        # Read database-specific queries
-        $INCLUDE ${modconfdir}/${.:name}/main/${dialect}/queries.conf
+    # Read database-specific queries
+    $INCLUDE ${modconfdir}/${.:name}/main/${dialect}/queries.conf
 }

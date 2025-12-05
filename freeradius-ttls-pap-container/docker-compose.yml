@@ -20,9 +20,9 @@ services:
     # You must modify the values in custom.env; see README for more info.
     env_file: ./custom.env
     volumes:
-      # Persist this if you're using sqlite instead of an external auth source:
-      - './vols/sqlite/:/db'
-      # Persist this if you aren't shipping syslogs to another host (syslog is best):
-      - './vols/log/:/var/log/freeradius/eduroam.log'
-    # Use "no" to avoid a boot loop if you're still testing, otherwise use "unless-stopped".
+      # Uncomment to persist this if you're using sqlite instead of an external auth source:
+      #- './vols/sqlite/:/db'
+      # Uncomment to persist this if you aren't shipping syslogs to another host (syslog is best):
+      #- './vols/log/:/var/log/freeradius'
+    # Use "no" to avoid a boot loop if you're still testing, otherwise use unless-stopped or always.
     restart: "no"

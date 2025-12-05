@@ -1,7 +1,6 @@
 # Based on https://wiki.freeradius.org/guide/eduroam as of 2025-03-15
 # Modified so anything starting with FR_ is automagically set based on container env vars
-# Also made VLAN assignment optional, as it's a best practice but not strictly necessary
-# Various work is done here to condense outer + inner session details into fewer logs
+# VLAN assignment is optional, as it's a best practice but not strictly necessary
 
 # The "domain" part (realm) of your users' fully-qualified usernames.
 # You must register this with your NRO or they won't forward your own roaming users'
@@ -15,139 +14,131 @@ eduroam_visitors_vlan = "FR_VLAN_VISITORS"
 eduroam_own_vlan = "FR_VLAN_OWNUSERS"
 
 server eduroam {
-        listen {
-                type = auth
-                ipaddr = *
-                port = 1812
-                # eduroam-US does not use accounting/1813, so we don't either
+    listen {
+        type = auth
+        ipaddr = *
+        port = 1812
+        # eduroam-US does not use accounting/1813, so we don't either
+    }
+
+    authorize {
+        # Some work just for the very first packet in the session:
+        # Store a session start timestamp (Tmp-Integer-0) so we can figure out
+        # the total elapsed session time (Tmp-Integer-1) later; and a random-ish
+        # Correlation-ID (Tmp-String-0) to help find things in the logs
+        if (!&session-state:Tmp-Integer-0) {
+            update session-state {
+                Tmp-Integer-0 := "%{expr:%c*1000 + %C/1000}"
+                Tmp-String-0 := "%{randstr:5a}"
+            }
         }
 
-        authorize {
-                # Some work just for the very first packet in the session:
-                # Store a session start timestamp (Tmp-Integer-0) so we can figure out
-                # the total elapsed session time (Tmp-Integer-1) later; and a random-ish
-                # Correlation-ID (Tmp-String-0) to help find things in the logs
-                if (!&session-state:Tmp-Integer-0) {
-                        update session-state {
-                                Tmp-Integer-0 := "%{expr:%c*1000 + %C/1000}"
-                                Tmp-String-0 := "%{rand:100000}-%l"
-                        }
-                }
-
-                # Copy Correlation-ID to control on every packet
-                update control {
-                        Tmp-String-0 := "%{session-state:Tmp-String-0}"
-                }
-
-                # Count packets (Tmp-Integer-2) for logging later at the final accept/reject
-                update session-state {
-                        Tmp-Integer-2 := "%{expr:%{%{session-state:Tmp-Integer-2}:-0} + 1}"
-                }
-
-                # Only log every received packet if debugging
-                if ("FR_VERBOSE_TOGGLE" == "true"){
-                        linelog_recv_request
-                }
-
-                # split_username_nai is a policy in the default distribution to
-                # split a username into username and domain.  We reject user-name
-                # strings without domains, as they're not routable.
-                split_username_nai
-                if (noop || !&Stripped-User-Domain) {
-                        reject
-                }
-
-                # Send the request to the NRO for your region.
-                # The details of the FLRs (Federation Level RADIUS servers)
-                # are in proxy.conf.
-                # You can make this condition as complex as you like, to
-                # include additional subdomains just concatenate the conditions
-                # with &&.
-                if (&Stripped-User-Domain != "${operator_name}") {
-                        update {
-                                control:Load-Balance-Key := &Calling-Station-ID
-                                control:Proxy-To-Realm := 'eduroam_flr'
-
-                                # Operator name (RFC 5580) identifies the network the
-                                # request originated from. It's not absolutely necessary
-                                # but it helps with debugging.
-                                request:Operator-Name := "1${operator_name}"
-                        }
-
-                        # Some clients aggressively retry, so be nice to your FLRs
-                        proxy_rate_limit
-                        if (reject) {
-                                linelog_ratelimit
-                        }
-
-                        return
-                }
-
-                # If the EAP module returns 'ok' or 'updated', it means it has handled
-                # the request and we don't need to call any other modules in this
-                # section.
-                eap {
-                        ok = return
-                        updated = return
-                }
+        # Copy Correlation-ID to control on every packet
+        update control {
+            Tmp-String-0 := "%{session-state:Tmp-String-0}"
         }
 
-        pre-proxy {
-                attr_filter.pre-proxy
-                linelog_send_proxy_request
+        # Count packets (Tmp-Integer-2) for logging later at the final accept/reject
+        update session-state {
+            Tmp-Integer-2 := "%{expr:%{%{session-state:Tmp-Integer-2}:-0} + 1}"
         }
 
-        post-proxy {
-                attr_filter.post-proxy
-                linelog_recv_proxy_response
+        # Only log every received packet if debugging
+        if ("FR_VERBOSE_TOGGLE" == "true"){
+            linelog_recv_request
         }
 
-        authenticate {
-                eap
+        # Let rlm_proxy_rate_limit reject instead of proxying if client is trying too frequently
+        # It rejects immediately, so we can't "catch" the return code to set a custom reply as of 3.2.8
+        # You'll know someone was rate limited if you enable debugging and see a message like this from radiusd:
+        # "proxy_rate_limit: Active rate limit entry xxxxx (nnn) matched for new request. Cancelling proxy and sending Access-Reject."
+        proxy_rate_limit
+
+        # split_username_nai is a policy in the default distribution to
+        # split a username into username and domain.  We reject user-name
+        # strings without domains, as they're not routable.
+        split_username_nai
+        if (noop || !&Stripped-User-Domain) {
+            reject
         }
 
-        post-auth {
-                # Optionally set different VLANs for visitors and own users
-                if ("FR_VLAN_TOGGLE" == "true"){
-                        update reply {
-                                Tunnel-Type := VLAN
-                                Tunnel-Medium-Type := IEEE-802
-                        }
-                        if (&control:Proxy-To-Realm) {
-                                update reply {
-                                        Tunnel-Private-Group-ID = ${eduroam_visitors_vlan}
-                                }
-                        }
-                        else {
-                                update reply {
-                                        Tunnel-Private-Group-ID = ${eduroam_own_vlan}
-                                }
-                        }
-                }
-
-                # We're sending a response to one of OUR network devices for one of
-                # OUR users so provide it with the real user-identity.
-                if (&session-state:Stripped-User-Name) {
-                        update reply {
-                                User-Name := "%{session-state:Stripped-User-Name}@%{Stripped-User-Domain}"
-                        }
-                }
-
-                # Compute total elapsed time (Tmp-Integer-1) from first packet's timestamp, i.e.
-                # (now_milliseconds) - (first_packet_milliseconds)
-                # and if we somehow got here without a start timestamp:
-                # (now_milliseconds) - (now_milliseconds)
-                if (&session-state:Tmp-Integer-0){
-                        update session-state { Tmp-Integer-1 := "%{expr:(%c*1000 + %C/1000) - %{session-state:Tmp-Integer-0}}" }
-                } else {
-                        update session-state { Tmp-Integer-1 := 0 }
-                }
-
-                linelog_send_accept
-
-                Post-Auth-Type REJECT {
-                        attr_filter.access_reject
-                        linelog_send_reject
-                }
+        # Send the request to the FLRs in proxy.conf if it's not for us
+        if (&Stripped-User-Domain != "${operator_name}") {
+            update {
+                control:Load-Balance-Key := &Calling-Station-ID
+                control:Proxy-To-Realm := 'eduroam_flr'
+                request:Operator-Name := "1${operator_name}"
+            }
+            return
         }
+
+        # If the EAP module returns 'ok' or 'updated', it means it has handled
+        # the request and we don't need to call any other modules in this
+        # section.
+        eap {
+            ok = return
+            updated = return
+        }
+    }
+
+    pre-proxy {
+        attr_filter.pre-proxy
+        linelog_send_proxy_request
+    }
+
+    post-proxy {
+        attr_filter.post-proxy
+        linelog_recv_proxy_response
+ 
+        # Let rlm_proxy_rate_limit update its cache
+        proxy_rate_limit
+    }
+
+    authenticate {
+        eap
+    }
+
+    post-auth {
+        # Optionally set VLANs for visitors and own users
+        if ("FR_VLAN_TOGGLE" == "true"){
+            update reply {
+                Tunnel-Type := VLAN
+                Tunnel-Medium-Type := IEEE-802
+            }
+            if (&control:Proxy-To-Realm) {
+                update reply {
+                    Tunnel-Private-Group-ID = ${eduroam_visitors_vlan}
+                }
+            } else {
+                update reply {
+                    Tunnel-Private-Group-ID = ${eduroam_own_vlan}
+                }
+            }
+        }
+
+        # Compute total elapsed time (Tmp-Integer-1), i.e. (now_milliseconds) - (first_packet_milliseconds)
+        if (&session-state:Tmp-Integer-0){
+            update session-state { Tmp-Integer-1 := "%{expr:(%c*1000 + %C/1000) - %{session-state:Tmp-Integer-0}}" }
+        }
+
+        if(&session-state:Tmp-String-3 == "hit") {
+            linelog_send_cached_accept
+        } else {
+            linelog_send_accept
+        }
+
+        Post-Auth-Type REJECT {
+            attr_filter.access_reject
+
+            # Compute total elapsed time here too
+            if (&session-state:Tmp-Integer-0){
+                update session-state { Tmp-Integer-1 := "%{expr:(%c*1000 + %C/1000) - %{session-state:Tmp-Integer-0}}" }
+            }
+            if(&session-state:Tmp-String-3 == "hit") {
+                linelog_send_cached_reject
+            } else {
+                linelog_send_reject
+            }
+        }
+    }
 }

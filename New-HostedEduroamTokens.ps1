@@ -7,7 +7,7 @@
 # files are only read upon FreeRADIUS startup, making it not very scalable.
 #
 # The idea is to distribute these tokens to constituent eduroam subscribers who can't run their own IdP for one
-# reason or another (e.g. lack of IT staff, Linux VM hosting ability, and/or centralized identity store).
+# reason or another (e.g. lack of IT staff, Linux VM hosting ability, and/or centralized identity source).
 #
 # Obviously, you'll need to operate an instance of FreeRADIUS somewhere, and feed it the results of this script.
 # We envision a FreeRADIUS container for each constituent in question, under a parent DNS domain indicating

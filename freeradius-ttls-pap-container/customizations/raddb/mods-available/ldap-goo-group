@@ -1,11 +1,12 @@
 # Modified so anything starting with FR_ is automagically set based on container env vars
-# Designed for use with Microsoft Active Directory - securely bind as a user, then send
-# the client credentials in cleartext. This avoids NTLM and MSCHAPv2 which have long been
-# rumored to be on the chopping block. However, it's (still) critical that we speak LDAP over
-# an encrypted connection to AD, i.e. either LDAPS (636) or LDAP + StartTLS (389).
+# Designed for use with Google's Secure LDAP service - securely bind with Google-issued LDAP client
+# credentials (cert/key pair), then send the actual user's credentials in cleartext.
 #
 # More information:
 #  https://www.freeradius.org/documentation/freeradius-server/3.2.8/concepts/modules/ldap/authentication.html
+#  https://support.google.com/cloudidentity/answer/9089736?hl=en&ref_topic=9173976#zippy=%2Cfreeradius
+#  https://support.google.com/a/answer/9188164?sjid=17329060464896445123-NC
+#  https://support.google.com/a/answer/9167101?hl=en
 #
 # This mod is called if the container's environment specified to use group matching, not user matching
 
@@ -16,19 +17,19 @@ ldap {
     # Port 389 is LDAP, 636 is LDAPS.
     port = FR_LDAP_SEC_PORT
 
-    # Bind user credentials
+    # Bind user credentials: generate these at Google in your LDAP client settings
     identity = 'FR_LDAP_BIND_USER'
     password = 'FR_LDAP_BIND_PASS'
 
     # dn from which all searches will start
     base_dn = 'FR_LDAP_BASEDN'
 
-    # DN of group the users must be in for access
-    group_dn = 'FR_LDAP_GROUP_DN'
-
     # Name of the attribute that contains the user DN.
     # The default name is LDAP-UserDn.
     user_dn = "LDAP-UserDn"
+ 
+    # DN of group the users must be in for access
+    group_dn = 'FR_LDAP_GROUP_DN'
 
     # User lookups
     user {
@@ -36,7 +37,7 @@ ldap {
         base_dn = "${..base_dn}"
 
         # Find the user, but only if they're in the group FR_LDAP_GROUP_DN
-        filter = "(&(objectClass=user)(sAMAccountName=%{%{Stripped-User-Name}:-%{User-Name}})(memberOf:1.2.840.113556.1.4.1941:=${..group_dn}))"
+        filter = "(&(objectClass=user)(uid=%{Stripped-User-Name})(memberOf:1.2.840.113556.1.4.1941:=${..group_dn}))"
         scope = 'sub'
         access_positive = yes
     }
@@ -45,8 +46,8 @@ ldap {
         chase_referrals = yes
         rebind = yes
         res_timeout = 10
-        srv_timelimit = 5 # in case of large OUs or heavily-loaded DCs
-        net_timeout = 3 # allow for some WAN latency
+        srv_timelimit = 3
+        net_timeout = 1
         idle = 120 # to match pool's idle_timeout
         probes = 3
         interval = 3
@@ -54,23 +55,26 @@ ldap {
     }
 
     tls {
-        start_tls = FR_LDAP_SEC_STLS_TOGGLE
-        ca_file = ${certdir}/ldap_cacert.pem
-        require_cert    = "demand"
+        start_tls = no
+        certificate_file = ${certdir}/google.pem
+        private_key_file = ${certdir}/google.key
+        require_cert    = "demand" # google says "allow", but we're strict
         tls_min_version = "1.2"
         tls_max_version = "1.3"
         cipher_list = "DEFAULT"
     }
 
+    # Pool settings tuned to help avoid exceeding Google's 4 query/sec quota (rlm_cache also helps)
+    # Limited workers, faster and fewer retries
     pool {
-        start = ${thread[pool].start_servers}
-        min = ${thread[pool].min_spare_servers}
-        max = ${thread[pool].max_servers}
-        spare = ${thread[pool].max_spare_servers}
+        start = 1
+        min = 1
+        max = 4
+        spare = 1
         uses = 0
-        retry_delay = 30
-        lifetime = 0
+        retry_delay = 1
+        lifetime = 3600
         idle_timeout = 120
-        max_retries = 5
+        max_retries = 2
     }
 }

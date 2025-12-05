@@ -1,189 +1,133 @@
 # eSO-hostable rapid-deployment containerized FreeRADIUS solution for K-12s, libraries, museums, etc.
-This is a containerized eduroam IdP + SP solution using FreeRADIUS, pre-configured and tailored for K-12, library, and museum deployments in the US. There are numerous examples of working eduroam configs in the wild, but many are so generalized and flexible that it can be daunting for a new eduroam IdP deployer to sort out international vs. US-specific items, considerations around different EAP types, and so forth. Our goal is to provide a free, reasonably secure by default, rapidly-deployable container, pre-configured to work with the eduroam-US infrastructure and minimize maintenance effort for whoever hosts the IdP (whether a school, small college, or an eduroam Support Organization on behalf of its constituents).
+Containerized eduroam IdP + SP solution using FreeRADIUS, pre-configured and tailored for K-12, library, and museum deployments in the US.
 
-## Table of Contents
+Free, rapidly-deployable and repeatable, reasonably secure by default, and pre-configured to work with the eduroam-US infrastructure with minimal maintenance effort for whoever hosts it, whether a school, small college, or an eduroam Support Organization on behalf of its constituents.
 
-- [Setup](#setup)
-  - [eduroam registration](#eduroam-registration)
-  - [Container hosting](#container-hosting)
-  - [Bootstrap CA script](#bootstrap-ca-script)
-  - [Wireless profile](#wireless-profile)
-  - [Identity options](#identity-options---randomized-tokens-or-bring-your-own)
-- [Building and running the container](#building-and-running-the-container)
-  - [Environmental variables](#environtmental-variables)
-    - [The basics](#the-basics)
-    - [Logging](#logging)
-- [Finding LDAP Certificates in your Active Directory environment](#finding-ldap-certificates-in-your-active-directory-environment)
-  - [Extracting the root and intermediate CA certs](#extracting-the-root-and-intermediate-ca-certs)
-- [Under the hood](#under-the-hood)
-  - [Building and updating](#building-and-updating)
-  - [Entrypoint script magic](#entrypoint-script-magic)
+# Table of Contents
+  - [Why?](#why)
+  - [Setup](#setup)
+    - [eduroam registration](#eduroam-registration)
+    - [Container hosting](#container-hosting)
+    - [Bootstrap CA script](#bootstrap-ca-script)
+    - [Wireless profile](#wireless-profile)
+    - [Identity source options](#identity-source-options)
+  - [Building and running the container](#building-and-running-the-container)
+    - [Environmental variables](#environmental-variables)
+  - [Logging options](#logging-options)
+  - [About LDAP certificates](#about-ldap-certificates)
+    - [Google](#google)
+    - [Active Directory Domain Controllers](#active-directory-domain-controllers)
+  - [Updating](#updating)
+  - [Further reading](#further-reading)
 
-## OK, but why?
-As an eduroam Support Organization (eSO), we had the following goals:
-- Give eSOs a quick and securely configured eduroam IdP to host on behalf of their smaller constituents who lack a central identity store, have a very small IT department, or have a relatively small set of users. By bundling a sqlite DB with randomizable credentials, credentials can be issued in person at the beginning of a school year, then easily destroyed and re-created the next school year. In many cases, a central identity environment exists but the IT team may lack the expertise, time, or willingness to set up NPS or a Linux VM to work with eduroam.
-- Give constituents (i.e. schools, libraries, museums) a simple cookie-cutter eduroam IdP they can host themselves on old hardware, a prosumer-grade NAS that supports Docker, at a consultant's cloud provider, etc. in a way that can be quickly configured to talk to Active Directory, Azure/Entra, Google, or similar, over a secure LDAP connection. No NTLM or MCHAPv2 auth here; we chose EAP-TTLS + PAP, which takes a bit of work to [bind to LDAP and send the plaintext password inside an encrypted tunnel](https://www.freeradius.org/documentation/freeradius-server/3.2.8/concepts/modules/ldap/authentication.html)). When properly configured, this is quite reasonably secure - so we've focused on making it hard to misconfigure.
-- Contribute our work back to the broader education community. While we're focused on spurring eduroam adoption in our neck of the woods, this is still broadly applicable (just not fine-tuned) to larger education-affiliated organizations and other countries.
+# Why?
+There are numerous examples of valid eduroam configs in the wild. Many are so generalized and flexible that it can be daunting for a new eduroam IdP deployer to sort out international vs. US-specific items, considerations around EAP types, integrating with their identity source, log options, and so forth. As an eduroam Support Organization (eSO), we had the following goals:
+- Give eSOs a quickly deployable and scalable option to host eduroam IdPs on behalf of their smaller constituents who lack a central identity source, have a very small IT department, or have a relatively small set of users. In many cases, a central identity source exists but the IT team (which may be a volunteer) lacks the expertise, time, or willingness to set up NPS or a Linux VM to work with eduroam.
+- Give constituents (i.e. schools, libraries, museums) a simple cookie-cutter eduroam IdP they can host themselves on old hardware, a prosumer-grade NAS that supports Docker, at a consultant's cloud provider, etc. in a way that can be quickly configured to talk to Active Directory (on-prem, hybrid, or managed AD), Google Workspace, or similar, over a secure LDAP connection. A bundled sqlite DB with randomizable credentials is included as an "identity source of last resort", e.g. for demos, temporary events, schools without an enterprise identity system, or micro schools.
+- Use secure configurations by default: we use EAP-TTLS + PAP, which takes a bit of work to do properly, but is quite reasonably secure - so we've focused on making it hard to misconfigure.
+- Contribute our work back to the broader education community. While we're focused on spurring eduroam adoption in our neck of the woods, this is still broadly applicable (just not necessarily fine-tuned) to larger education-affiliated organizations and other countries.
 
 # Setup
 ## eduroam registration
-We assume you're a US-based [eduroam Support Organization (eSO)](https://incommon.org/eduroam/eduroam-k12-libraries-museums/), but maybe you're a school, school district, EDU-focused contractor, a community college... In any case, you must be able to register an IdP and/or SP in the eduroam infrastructure, as this container needs to be registered for roaming to work. US-based organizations do this via Internet2's Federation Manager tool. If you don't know what that is, reach out to Internet2 or your state's eSO. 
+We assume you're a US-based [eduroam Support Organization (eSO)](https://incommon.org/eduroam/eduroam-k12-libraries-museums/), but you can also host this directly as a school, school district, multi-district IT services unit, EDU-focused contractor, a community college... In any case, you must be able to register an IdP and/or SP in the eduroam infrastructure (you can test locally, but roaming won't work unless you're registered). US-based organizations do this via Internet2's Federation Manager tool; if you don't know what that is, reach out to Internet2 or your state's eSO.
 
 ## Container hosting
-You'll need to be able to host a container. You'll need to be able to reboot the container on a schedule (or be in the habit of redeploying so you get the latest security updates from the upstream FreeRADIUS container).
+You'll need to be able to host a container. Podman and Docker are common, well documented, and relatively easy to install on a Linux VM or a tiny PC. You'll need to be able to reboot the container on a schedule or be in the habit of redeploying so you get the latest security updates from the upstream FreeRADIUS container.
 
-If you're an eSO, we suggest following a repeatable DNS pattern like `(constituent).roam.(your-eso-domain)`, e.g. `aa.roam.example.org`, `bb.roam.example.org`, `cc.roam.example.org`, etc. Users would then authenticate as `foo@aa.roam.example.org`. This should also make orchestration easier if you want to build a repeatable workflow.
+If you're an eSO, we suggest following a repeatable DNS pattern like `(constituent).roam.(your-eso-domain)`, e.g. `a.roam.example.org`, `b.roam.example.org`, `c.roam.example.org`, etc. Your constituents' users would then authenticate as `foo@a.roam.example.org`. This should also make orchestration easier if you want to build a repeatable workflow for many constituents.
 
 ## Bootstrap CA script
-The *Certificates* section later in this document goes into greater detail about why/how it works, but you'll need to run the provided `bootstrap-ca.sh` bash script on a Linux system other than the container itself, and hang on to its output before you can start your container for the first time. This step only needs to be done once per constituent, and the resulting CA certificate is valid for 20 years.
+You'll need to run the provided `bootstrap-ca.sh` bash script on a Linux system, and hang on to its output before you can start your container for the first time. This only needs to be done once per constituent, and the resulting CA certificate is valid for 20 years. The container will use this cert to generate its own short-lived certs whenever it starts, and because clients will be told to trust the private cert only for eduroam, you won't need to worry about ever-shortening public cert lifetimes.
 
 ## Wireless profile
-We strongly recommend using [eduroam CAT](https://cat.eduroam.org) to generate and distribute a wireless profile. You can then allow self-service/BYOD installation of the CAT-generated profile via the excellent [geteduroam app](https://eduroam.org/geteduroam-get-connected-quickly-and-safely/), push the profile via your organization's mobile device management (MDM) platform if you have one, or even both.
+We strongly recommend using [eduroam CAT](https://cat.eduroam.org) to generate and distribute a wireless profile. You can then allow self-service/BYOD installation of the CAT-generated profile using the excellent [geteduroam app](https://eduroam.org/geteduroam-get-connected-quickly-and-safely/) via the major app stores, push the profile yourself via your organization's mobile device management (MDM) platform if you have one, or even use both approaches.
 
-Work with your NRO (e.g. Internet2 in the US) to register for CAT admin access if you do not already have it for the IdP realm(s) you are supporting with this container. Do NOT encourage users to manually connect and blindly fill in values, accept mystery certificates, ignore warnings, etc.; eduroam is as secure as you configure it to be.
+Work with your NRO (e.g. Internet2 in the US) to register for CAT admin access if you do not already have it for the IdP realm(s) you are supporting with this container. Do NOT encourage users to manually connect and blindly fill in values, accept mystery certificates while traveling, ignore server cert warnings, etc.
 
-## Identity options
+## Identity source options
 
 ### Randomized tokens (local sqlite DB, manual tracking of who gets which identities)
-This option is probably best suited for demo / temporary guest scenarios; or small schools, libraries, or museums lacking a central secure LDAP-based identity store for their students, volunteers, and staff.
+This option is probably best suited for demo / temporary event scenarios, small schools, libraries, or museums lacking a central identity source.
 
-The bundled sqlite user DB can host identities for a constituent that doesn't have a central identity store. Just use PowerShell / pwsh 7.x to run `New-HostedEduroamTokens.ps1 -Realm foo.example.org -TokenCount number` to generate as many random credentials as you need, and dump the output into `users-preload.sql` before building the container. We suggest using the DNS pattern mentioned above for the users' realm.
+The bundled sqlite user DB can host identities for a constituent that doesn't have a central identity source. We've supplied a PowerShell / pwsh 7.x script (run `New-HostedEduroamTokens.ps1 -Realm a.roam.example.org -TokenCount number`) and an AI-generated (but human curated) bash version (`new_hosted_eduroam_tokens.sh a.roam.example.org number`) to generate as many random credentials as you need, and dump the output into `users-preload.sql` before building the container.
 
-If you don't have PowerShell or PowerShell Core available to you, you can run the AI-generated (but human curated) bash translation: `new_hosted_eduroam_tokens.sh foo.example.org number`. In either case, you can also copy and paste the output to a spreadsheet or other document, and note the recipient, and date/time issued, of each username + password. If you choose to do this, you must not lose or widely distribute the document or you will have no idea who your users are - and that's a Bad Thing(tm) worthy of starting over from scratch with a new set of identities.
+In either case, you could also copy and paste the output to a spreadsheet or other document as a paper roster. Note the recipient, date/time issued, and contact info for whomever you assign each username + password. If you choose to do this, you must not lose or widely distribute the document or you will have no idea who your users are - and that's a Bad Thing(tm) worthy of starting over from scratch with a new set of randomized identities. It also puts you at risk of violating the eduroam Terms of Service, etc. We're considering bundling a simple web UI to reduce the administrative burden for this scenario.
 
-In a future release, we'd like to bundle an incredibly basic UI in the form of a sqlite editor to reduce the administrative burden for this scenario. Baby steps...
+### Bring your own secure LDAP (e.g. Active Directory)
+If you already have an LDAP-compatible identity source, you'll need credentials to let FreeRADIUS talk to it over LDAPS (port 636) or LDAP + StartTLS (port 389). You'll also need to know the base DN / OU where the user accounts you'll permit to connect to eduroam reside, and optionally a group of users to allow-list, i.e. the typical LDAP details. Lastly, you'll need the LDAP server's root CA and, if it uses one, its intermediate cert, so authentication between this container and the LDAP backend can be secured. You do not need the "server" or "end entity" cert used by the LDAP server; the idea is to trust the issuer of the cert and the LDAP server(s) hostname.
 
-### Bring your own (secure LDAP, i.e. Active Directory; Entra / Google planned for a future release)
-If you already have an identity store, you'll need credentials to let FreeRADIUS talk to that identity store over LDAP + StartTLS (port 389; not the same as LDAPS over port 636). You'll also need to know the base DN / OU where the user accounts permitted to connect to eduroam reside (i.e. the typical LDAP details). Lastly, you'll need the LDAP server's root CA and, if it uses one, its intermediate cert, so authentication between this container and your LDAP backend can be secured. You do not need the actual certificate used by the LDAP server, i.e. the end entity cert; the idea is to trust the issuer of the cert, not the specific cert.
+If you're using Active Directory but not protecting LDAP communication with a certificate of some sort, this container won't have a secure way to talk to your DCs... that's a Bad Thing(tm) and we intentionally don't provide a way to override cert checking.
 
-If you're using Active Directory but not protecting LDAP communication with a certificate of some sort, this container won't have a secure way to talk to your DCs... that's a Bad Thing(tm).
+### Google Secure LDAP
+Google does LDAPS a little differently than AD and has a query rate limit, so we treat it differently. If your Google Workspace tenant does not already have the Secure LDAP service enabled, you will need to enable it from the tenant's admin portal. You'll need to create an "LDAP client", which is really a client cert + key for the container to authenticate to Google over LDAPS, and "access credentials", which are an auto-generated username and passphrase used in conjunction with the client cert + key. You'll also need to allow the LDAP client to read basic user information from your tenant, and note the OU and (optional) group your eduroam users reside in.
 
 # Building and running the container
-Build and run it as you typically would with the supplied `Dockerfile` and/or `docker-compose.yml`. We tested with `docker-compose` for convenience, but you could use other methods.
+Build and run it as you typically would with the supplied `Dockerfile` and/or `docker-compose.yml`. We tested with `docker-compose` for convenience, but you could use other methods. For example:
+```
+mkdir /opt/constituent-a && cd /opt/constituent-a
+git clone https://github.com/nshe-scs/public-eso-tools
+vim docker-compose.yml # set the desired container name, IP/port mapping, etc.
+vim custom.env # set your env vars to configure everything - see next section
+docker compose up --build -d
+docker compose logs -f # make sure the container started correctly and is waiting for requests
+```
 
 ## Environmental variables
-However you choose to run it, whether manually or via an automation/orchestration tool, the container configuration is completely driven by environmental variables. The entrypoint script will put the important details in the correct places in the various freeradius config files during container startup, and link the correct sites/mods/etc. based on your needs. We recommend setting these variables via the supplied `custom.env` file. You'll need one per container. Some variables can be left blank.
+The container configuration is completely driven by environmental variables. Do not edit the various FreeRADIUS conf files from this project; the container's entrypoint script will handle everything during container startup. We recommend setting the environment via the supplied `custom.env` file, which was written to be self-documenting - just dive in and fill in the blanks in the file.
 
-### The basics
-`FR_IDP_FQDN`: The fully qualified public hostname for this container, which will also be the hostname included in the TLS certificate generated at startup.
+# Logging options
+Anyone operating an eduroam IdP or SP is required to keep sufficient logs for troubleshooting and incident response. Logging the container's console output to a file is not sufficient, and while FreeRADIUS in debug mode is quite verbose (this is a good thing), you shouldn't run in debug mode once you're done testing, and you probably don't have infinite space for logs.
 
-`FR_IDP_SECRET`: RADIUS shared secret you configured in Federation Manager for this IdP, e.g. a random 63-character mixed-case alphanumeric string that is NOT the same as `FR_WAP_SECRET`. One quick method to generate one: `echo $(tr -dc 'A-Za-z0-9' </dev/urandom | head -c63)`.
+We provide two options that are less verbose than the debug level console output, but are still useful for investigating and troubleshooting, and we include a `Correlation-Id` field in the log entries to help you grep and follow individual EAP sessions.
 
-`FR_IDP_REALM`: The fully qualified domain name for your users, e.g. `example.org` or `constituent-name.roam.your-eso-name.example.org`
+If you have a remote syslog host or SIEM tool, use it. Take advantage of its collection, searching, and compression capabilities. If you don't have a syslog receiver of some sort, the container can log to a file instead (`/var/log/freeradius/eduroam.log`) but you must persistently map / bind `/var/log/freeradius` to a volume on your container host or the log will disappear when the container stops. It's up to you to rotate and trim the log; the container won't do it for you.
 
-`FR_FLR_IP_1`: IP address of the first federation level RADIUS proxy, e.g. 163.253.30.2 for tlrs2.eduroam.us (west coast).
+# About LDAP certificates
+Strict LDAP certificate checking ensures that the authentication traffic between the container and the constituent's auth backend are encrypted in transit and only sent to the constituent's own LDAP server(s), not a clever adversary.
 
-`FR_FLR_IP_2`: IP address of the second federation level RADIUS proxy, e.g. 163.253.31.2 for tlrs1.eduroam.us (east coast).
+## Google
+In the case of Google, the LDAPS connection is protected by the client certificate provided by Google (see *Google Secure LDAP* above).
 
-### TLS-related details, also required
-Certificate management is generally a pain, even with automation, but we've tried to ease the pain a bit. See *Certificates* below for more details about the approach we've taken.
+## Active Directory Domain Controllers
+In an AD environment, it can be difficult to find the root and intermediate certificates that signed a domain controller's LDAPS certificate. Depending on the DC and/or AD Certificate Services configuration, retrieving the root and (if applicable) intermediate certificates used to sign the DCs' LDAP certificates may not be feasible programmatically, so here's a short guide to retrieving it via the GUI.
 
-`FR_TLS_CA_CERT_BASE64`: The base64-encoded x.509 private CA cert, in PEM format, that will be used to generate a new TLS cert for FreeRADIUS to use every time the container starts. Clients will need to trust this CA cert. *Do not reuse another CA cert for this purpose.*
+The simplest way to retrieve the root and intermediate certificates is to ask a Domain Admin to run `certlm.msc` on a domain controller and have them retrieve it for you. While it is technically possible to retrieve via the openssl command, many DCs are not configured to serve their root and intermediate certificates along with the actual LDAP cert, so it's not a reliable method.
 
-`FR_TLS_CA_KEY_BASE64`: The base64-encoded private key corresponding to the private CA cert.
+Inside the `certlm.msc` MMC snap-in, go to `Personal` -> `Certificates`. You should see a certificate issued to the domain controller in question. The `Certificate Template` column will likely say `Domain Controller` or similar - exact phrasing depends on the environment. Double-click the certificate from the list to view its properties, then click the `Certification Path` tab. You should see more than one certificate in a simple tree view. The bottom-most certificate, typically having the same FQDN as the domain controller, is the server or "end entity" certificate, which is only cert that you do NOT need.
 
-`FR_TLS_MAXAGE`: Number of days a newly-autogenerated server TLS cert should last. This is effectively a "use by" / expiration date for your container because FreeRADIUS needs to completely restart to use a new TLS cert. We recommend 90.
+In the certificate properties window, work your way from the second-lowest to the highest certificate in the hierarchy: the lower certs are intermediates, and the highest is the root CA cert. It is possible that there is no intermediate cert.
 
-### Only omit these if you are not operating an SP (i.e. wireless hotspot) as part of your eduroam deployment. This is a VERY uncommon situation.
-`FR_WAP_SECRET`: RADIUS shared secret you configured on your wireless APs / controller to talk to this container, e.g. a random 63-character mixed-case alphanumeric string that is NOT the same as `FR_IDP_REALM`.
+Double-click any intermediate certs, causing a new certificate properties window to open. Click the `Details` tab -> `Copy to File...` button. A wizard should open, asking you how and where to save the file.  Choose `Base-64 encoded X.509` and save it somewhere as `intermediate.pem` (if you have multiple intermediates, name them accordingly). Once saved, close the wizard and the intermediate cert's Properties window. Repeat this process for the root cert, saving it as `root.pem`. These files are safe to send over email, chat, etc., as they are public certificates, not private keys. Copy them to the container host and base64-encode them per the details in the example `custom.env`.
 
-`FR_WAP_IP`: IP address or CIDR subnet of your own wireless APs / controller that will send authentication requests to this container, e.g. `192.168.0.1/24`.
+### If you only see one certificate...
+If there is exactly one certificate, the DC is likely using an individual self-signed certificate and you cannot securely communicate to it with this container. Ask a Domain Admin (or their consultant...) to configure AD to enable secure LDAP connections with a certificate issued by a private Certificate Authority (CA) such as AD Certificate Services. There is no need to pay a public CA for certs for your DCs and it will likely introduce exciting new problems down the road.
 
-You may additionally omit these if you don't use VLANs, but we strongly recommend using them to help segment your network traffic:
-
-`FR_VLAN_VISITORS`: VLAN number to assign your eduroam visitors, i.e. external users roaming to your wireless network.
-
-`FR_VLAN_OWNUSERS`: VLAN number to assign your own users when they connect to your wireless network (using eduroam as your organization's primary SSID is a best practice).
-
-### Only set these if you want to use LDAP; setting these will disable the local sqlite DB, and omitting them will enable the local sqlite DB
-`FR_LDAP_HOST_FQDN_1`: fully qualified hostname of your first LDAP server. Hostnames are generally better than IPs, to avoid LDAP server cert issues.
-
-`FR_LDAP_HOST_FQDN_2`: fully qualified hostname of another LDAP server, for redundancy. If you only have one, just use the same value as `FR_LDAP_HOST_FQDN_1`.
-
-`FR_LDAP_BASEDN`: the LDAP location under which all your eduroam users reside (e.g. `cn=Users,dc=example,dc=org` or `ou=staff,ou=school1,dc=example,dc=org`).
-
-`FR_LDAP_BIND_USER`: the LDAP-formatted username (distinguished name, e.g. `cn=eduroam-ldap-bind,ou=special accounts,dc=example,dc=org`) of the service account that will connect to your LDAP servers and authenticate your eduroam users. The account must already exist. Do not use formatting like `EXAMPLE\eduroam-ldap-bind` or `eduroam-ldap-bind@example.org`.
-
-`FR_LDAP_BIND_PASS`: the password for `FR_LDAP_BIND_USER`. We recommend choosing a very long (64+ characters) random password for this account, and configuring it to never expire (if possible). To avoid input formatting problems, consider limiting your use of special characters to "basic" ones like `.@!-^_*()[]`
-
-#### LDAP security
-LDAP certificates for LDAPS (636/tcp) or LDAP + StartTLS (389/tcp) ensure that the authentication attempts between FreeRADIUS and your auth backend are encrypted in transit and only sent to your own LDAP server(s), not a clever attacker watching traffic between the container and your auth backend.
-
-Export the root and intermediate cert(s), but not the end entity cert, to PEM format (i.e. `-----BEGIN CERTIFICATE-----`) using your tool of choice, then use the command `base64 -w 0 /path/to/each/cert.pem` to base64 encode + remove line breaks so they can be pasted into the corresponding variables below.
-
-`FR_LDAP_SECURITY`: set to `ldaps` to use LDAPS (636/tcp), or `starttls` to use LDAP + StartTLS (389/tcp). Both methods are secure, but if you're not sure which to use, try LDAPS and if it doesn't work try again with StartTLS. Unencrypted LDAP is not supported, by design.
-
-See *Finding LDAP Certificates in your Active Directory environment* for help finding and retrieving these certificates from an AD domain controller.
-
-`FR_LDAP_ROOT_CERT_BASE64`: the root CA certificate that issued your intermediate and/or LDAP server cert, i.e. the top of the cert chain.
-
-`FR_LDAP_INTER_CERT_BASE64`: the intermediate CA certificate (if any) between the root CA certificate and the LDAP server cert. Omit or leave blank if you don't have an intermediate cert.
-
-`FR_LDAP_GROUP`: (optional) set this to the distinguishedName (e.g. `cn=eduroam users,dc=example,dc=org`) of a group if you want to further restrict access by also requiring users to be in a particular group to connect via eduroam. If omitted, we assume any user inside `FR_LDAP_BASEDN` is allowed to connect.
-
-### Logging
-Anyone operating an eduroam IdP or SP is required to keep sufficient logs for troubleshooting. FreeRADIUS, particularly in debug mode, can be _very_ chatty, and this is a good thing. But you probably don't have infinite space for logs, so we provide two options that are less verbose than debug level console output, but still very useful for investigating and troubleshooting. We also include a `Correlation-ID` field in these log entries to help you grep for individual EAP conversations.
-
-#### Remote syslog (recommended)
-If you have a remote syslog host or SIEM tool, take advantage of its collection, searching, and compression capabilities.
-
-`FR_LOG_SYSLOG_HOST`: the FQDN or IP of your syslog host.
-
-`FR_LOG_SYSLOG_PORT`: the port number your syslog host is listening on.
-
-`FR_LOG_SYSLOG_PROTO`: either `tcp` (recommended) or `udp`.
-
-`FR_LOG_SYSLOG_FAC`: the syslog facility name FreeRADIUS logs should use. We recommend `local1` but this is arbitrary.
-
-`FR_LOG_SYSLOG_SEV`: the syslog severity level FreeRADIUS logs should use. We recommend `notice` but this is arbitrary.
-
-#### File based logging with persistent storage
-If you don't specify the syslog details above, we assume you don't have a syslog receiver. In that case, the container will log to a file instead: `/var/log/freeradius/eduroam.log`. You should persistently map / bind this file to a volume using your container host's recommended method. It's up to you to rotate and trim the log with a tool of your choice from your container host; the container won't do it for you. Simply logging the container's console output is not sufficient.
-
-# Finding LDAP Certificates in your Active Directory environment
-Depending on your AD domain controller and/or AD Certificate Services configuration, retrieving the root and (if applicable) intermediate certificates used to sign your domain controllers' LDAP certificate may not be possible programatically.
-
-The simplest way to retrieve an AD domain controller's root and intermediate certificates is to ask a Domain Admin to run `certlm.msc` on a domain controller and gather it for you via the Windows GUI. While it is technically possible to retrieve it via the openssl command, many DCs are not configured to serve their root and intermediate certificates along with the actual LDAP cert, so it's not a reliable method.
-
-Browse to `Personal` -> `Certificates`. You should see a certificate issued to the domain controller in question. The `Certificate Template` column will likely say `Domain Controller` or similar - again, this depends on your environment. Double-click the certificate from the list to view its properties, then click the `Certification Path` tab. You should see more than one certificate in a simple tree view. The bottom-most certificate, typically having the same FQDN as the domain controller, is the end entity certificate, which is only cert that you do NOT need from this dialog.
-
-## Extracting the root and intermediate CA certs
-In the certificate properties window, work your way from the second-lowest to the highest certificate in the hierarchy: the highest certificate is the root CA certificate, and any between the root and the bottom certificate are intermediate CA certificates. It is acceptable not to have an intermediate certificate.
-
-Double-click any intermediate certificates, causing a new certificate properties window to open. Click the `Details` tab -> `Copy to File...` button. A wizard should open, asking you how and where to save the file.  Choose `Base-64 encoded X.509` and save it somewhere as `intermediate.pem` (if you have multiple intermediates, name them accordingly). Once saved, close the wizard and the intermediate certificate's Properties window. Repeat the same process for the top-most certificate, saving it as `root.pem`. These files are safe to send over email, chat, etc., as they are public certificates. Now you can copy them to your container host and follow the steps in *LDAP Security* above.
-
-### If you only see one certificate in the list...
-If there is exactly one certificate in the list, the DC is likely using a self-signed certificate and you cannot securely communicate to it over LDAP. Ask your Domain Admin (or their consultant...) to configure AD to enable secure LDAP connections with a certificate issued by a private Certificate Authority (CA) such as AD Certificate Services.
-
-# Under the hood
+# Updating
 If you eat, live, and breathe containers, this is old hat for you. For the rest of us... well...
 
-## Building and updating
-We use the latest official Alpine-based FreeRADIUS container, add the sqlite and openssl packages, and copy our eduroam-US friendly config files over at container build time. We then apply actual configuration details during run time. Thus, you can destroy and rebuild the container every day and it will work the same way every time, as long as your config is the same (e.g. the set of environmental variables you feed your automation/orchestration tools). Security updates then take the form of pulling and rebuilding the container image, thereby starting from scratch with the latest patched Alpine + FreeRADIUS; destroying the currently-running container; and starting the new one.
+We use the latest official Alpine-based FreeRADIUS container, add the sqlite and openssl packages, and copy our eduroam-US friendly config files over at container build time. We then apply actual configuration details during run time. Thus, you can destroy and rebuild the container every day and it will work the same way every time, as long as your config is the same (e.g. the set of environmental variables you feed your automation/orchestration tools).
 
-This requires a change in thinking from operating a "traditional" VM. The author remembers when VMs were new and cool...
+Security updates: pull and rebuild the container image, stop the currently-running container, start a new one.
 
-## Entrypoint script magic
-At container startup, `entrypoint.sh` will do some helpful things for you. Perhaps most importantly, it will update the relevant FreeRADIUS conf files based on the environmental variables you made available to the container, and generate a brand new TLS certificate used by FreeRADIUS for EAP-TTLS.
+Updating to the newest release of this project: back up your old `custom.env`, `docker-compose.yml`, and (if you aren't using syslog) log file. Clone this repo/project from GitHub like you're doing a fresh install, and copy the backed-up files over before rebuilding/starting the container.
 
-### The "TLS" part of TTLS: server certificates
-eduroam clients need to be able to verify that they're talking to a legitimate IdP when they authenticate. Since this container is designed to give your users an easy way to access eduroam using EAP-TTLS + PAP, we need a usable TLS certificate. Please note we are not addressing client certs for EAP-TLS, but rather the server cert for EAP-TTLS.
+# Further reading
 
-### TLS certificate trust is different in EAP/RADIUS vs. web servers
-In a web client + server scenario, web clients generally have no idea about a given web server's identity until it needs to fetch a something from the server. Simplifying a bit: web browsers need to build a chain of trust from an HTTPS web server's cert to verify whether the server is who it claims to be, and not an imposter. That trust is founded upon pre-bundled well-known "public" CA certs trusted by the web browser. Enterprise wireless scenarios use a different approach: the client, configured in advance via a wireless profile, only needs to verify the identity of one particular server (i.e. this container). This means we don't need a fancy $100/yr. web TLS cert issued by a well-known public CA for your eduroam users to securely authenticate; we can use a "private" CA instead. The catch is that clients need to know about this private CA and the name of this container before connecting. See the *Wireless profile* section above and [information about EAP/RADIUS server certs and eduroam](https://wiki.geant.org/display/H2eduroam/EAP+Server+Certificate+considerations) for more information about how this works.
+## Private CA certs and our approach to automating (T)TLS
+The operator of this container (e.g. an eSO) generates a unique private CA cert and key using the provided `bootstrap-ca.sh` script once per IdP/constituent and feeds it to the container via env vars. At startup, the container issues itself a brand new cert for EAP-TTLS (not to be confused with EAP-TLS) using the private CA cert and key, then removes the key from its environment. The private CA cert (not the key, of course) can then be supplied to eduroam CAT or another wireless profile builder as the trust anchor for your wireless clients. No client reconfiguration is needed unless you change the private CA cert or rename the container.
 
-#### Our approach to automating TLS certificate management
-Using TLS with containers is tricky. Containerized services generally rely on another container, the container's host, orchestration tools, ACME (in or outside the container), and/or a TLS reverse proxy to handle this. But we're not working with TLS + HTTPS, and we're trying to keep things lightweight.
+It is NOT a Bad Thing(tm) to use a private CA cert with eduroam. See the *Wireless profile* section above and [information about EAP/RADIUS server certs and eduroam](https://wiki.geant.org/display/H2eduroam/EAP+Server+Certificate+considerations) for more information, or read on...
 
-We considered building a "cert watchdog" script that would run in the background to make TLS cert management completely transparent and friction-free. FreeRADIUS has to restart to load its certs, so we'd either have to terminate our own container and depend on the container host restarting it automatically; switch to a "heavier" container base image with a full `init` system; or write our own service management wrapper for FreeRADIUS... and none of these approaches seemed very "containery" or lightweight.
+Enterprise wireless clients are not web browsers. Wireless clients need to verify that they are talking to a legitimate server, but there is an expectation that someone in the "enterprise", not a third-party like a "public" CA, determines which servers are trustworthy. So clients are configured in advance via a wireless profile indicating the trustworthy server name(s) and expected CA cert, and will assume others are untrustworthy. The catch is that clients need the server name and the CA cert in advance. End-users delegate the question of trustworthiness to someone else in the organization/enterprise.
 
-Of course, it'd be great if we could just pre-generate and package a self-signed root CA cert as part of this repo... but then anyone could clone this repo and get the same self-signed root and its private key, allowing them to impersonate YOUR container. Fortunately, we found a middle ground that works pretty well.
+Contrast this with web servers. Clients generally have no idea about a given server's identity until it's time to fetch something from the server. Web browsers essentially need to build a chain of trust to verify that the server is who it claims to be, without ever having met the server before. That trust is based on "public" CA certs bundled with and trusted by the web browser. The end-user typically knows nothing about these CA certs or the organizations/people responsible for them. Trust is abstracted a little further away from the end-user, with the question of a server's trustworthiness left to someone outside their organization/enterprise, namely those responsible for the web browsers and CA certs.
 
-The operator of this container (e.g. an eSO) will generate a unique private CA cert using the provided `bootstrap-ca.sh` script once for each IdP/constituent. The resulting CA cert and its private key must be passed into the container's environment via an env var. At startup, the container will temporarily use the CA cert to issue a brand new server TLS cert, then "forget" its CA cert and key. The CA cert (but not the key, of course) can then be supplied to eduroam CAT or another wireless profile builder as the trust anchor for your wireless clients. The server TLS cert is essentially ephemeral and expires in `FR_TLS_MAXAGE` days; since the CA cert is the trust anchor, no client reconfiguration is needed when a new server cert is generated (unless you also renamed the container). The catch is that your container must be restarted every so often, which is a normal and containery thing to do.
+## Automating TLS cert management
+Using TLS with containers can be tricky, relying on another container, the container host, orchestration tools, ACME in or outside the container, and/or a reverse proxy to handle encrypting and decrypting traffic. But since we're not working with HTTPS and can also use a private CA cert, we use a lightweight self-contained solution: issue ourselves a cert every time we start.
 
-The CA cert generated by `bootstrap-ca.sh` and the server TLS certs are generated using 256 bit elliptic curve keys (ECDSA with prime256v1), roughly equivalent to 3072 bit RSA keys. This keeps cert and signature sizes small while sufficiently secure and fast, meaning fewer and smaller packets during TLS handshakes, EAP conversations, etc. We'd prefer to use ED25519, but certain mainstream wireless clients still don't support it.
+FreeRADIUS 3.2.x needs a restart to reload TLS certs, so we terminate the container after a configurable number of days, and depend on the container host to restart the container automatically. We chose not to use a "heavier" container base image with a full `init` system, or to write a custom service management wrapper because these approaches don't seem very "containery" or lightweight. The catch is that your containers must be restarted every so often, which is a normal and containery thing to do. If you host containers for multiple constituents and don't have fancy orchestration tools, you can stagger the terminations by setting different ages in `custom.env`.
 
-## Handling the fully-self-contained use case
-If no sqlite DB was found at `/db/freeradius.sqlite`, we'll pre-populate it using any SQL statements contained in `users-preload.sql`. Otherwise, we assume you're using persistent storage for `/db` and that the sqlite DB is already just the way you like it. We've provided scripts to generate a large number of randomized credentials that you can use for demo purposes or to create "tokens" to hand out as-needed.
+Of course, it'd be great if we could just pre-generate and package a root CA cert as part of this repo... but then anyone using this repo would have the same root and private key, allowing them to impersonate YOUR container. Fortunately, we found a middle ground that works pretty well.
 
-We recommend persisting the sqlite DB so you can interact with it from inside or outside of the container, e.g. to revoke a user's eduroam access or add/change users via the sqlite3 command and INSERT/DELETE rows in the `radcheck` table. A future release may incorporate a light web interface to make this a more constituent-friendly option instead of leaving user adds/deletes to the eSO.
+## Keeping TLS certs small(ish)
+The private CA cert and the server TLS certs are generated using 256 bit elliptic curve keys (ECDSA with prime256v1), roughly equivalent to 3072 bit RSA keys. This keeps cert and signature sizes small while sufficiently secure and fast, meaning fewer and smaller packets during TLS handshakes, EAP conversations, etc. We'd prefer ED25519, but certain mainstream wireless clients still don't support it. If you read this far, you may be interested in asking your favorite search engine for a performance and traffic comparison.

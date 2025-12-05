@@ -1,0 +1,12 @@
+# Don't accidentally publish certs/keys
+*.key
+*.pem
+*.p12
+*.pfx
+*.p7b
+*.crt
+*.cer
+*.der
+# Don't publish TODO docs
+TODO.*
+*.TODO
