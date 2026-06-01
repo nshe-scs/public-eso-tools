@@ -10,3 +10,6 @@
 # Don't publish TODO docs
 TODO.*
 *.TODO
+
+# Ignore local environment files so we don't overwrite them
+*.env
