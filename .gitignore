@@ -13,3 +13,7 @@ TODO.*
 
 # Ignore local environment files so we don't overwrite them
 *.env
+
+# Ignore local compose files, so we don't overwrite customizations
+*compose.yml
+*compose.yaml
