@@ -65,7 +65,9 @@ Google does LDAPS a little differently than AD and has a query rate limit, so we
 Build and run it as you typically would with the supplied `Dockerfile` and/or `docker-compose.yml`. We tested with `docker-compose` for convenience, but you could use other methods. For example:
 ```
 mkdir /opt/constituent-a && cd /opt/constituent-a
-git clone https://github.com/nshe-scs/public-eso-tools
+git clone https://github.com/nshe-scs/public-eso-tools # Pull down this project
+cd public-eso-tools/freeradius-ttls-pap-container
+cp docker-compose.yml.example docker-compose.yml && cp custom.env.example custom.env # Create local copies of examples
 vim docker-compose.yml # set the desired container name, IP/port mapping, etc.
 vim custom.env # set your env vars to configure everything - see next section
 docker compose up --build -d
@@ -108,8 +110,17 @@ If you eat, live, and breathe containers, this is old hat for you. For the rest 
 We use the latest official Alpine-based FreeRADIUS container, add the sqlite and openssl packages, and copy our eduroam-US friendly config files over at container build time. We then apply actual configuration details during run time. Thus, you can destroy and rebuild the container every day and it will work the same way every time, as long as your config is the same (e.g. the set of environmental variables you feed your automation/orchestration tools).
 
 Security updates: pull and rebuild the container image, stop the currently-running container, start a new one.
+In docker, this can be accomplished with a single command (within the project directory):
+```sh
+docker compose up -d --build
+```
 
-Updating to the newest release of this project: back up your old `custom.env`, `docker-compose.yml`, and (if you aren't using syslog) log file. Clone this repo/project from GitHub like you're doing a fresh install, and copy the backed-up files over before rebuilding/starting the container.
+Updating to the newest release of this project: back up your old `custom.env`, `docker-compose.yml`, and (if you aren't using syslog) log file.
+The included .gitignore file is set up to not overwrite these files, but it never hurts to have a backup!
+From the project directory:
+```sh
+git pull && docker compose up -d --build
+```
 
 # Further reading
 
