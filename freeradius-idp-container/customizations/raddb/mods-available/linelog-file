@@ -9,7 +9,7 @@
 # Tmp-String-1 is the inner-tunnel failure reason (e.g. why auth failed).
 # Tmp-Integer-0 is the timestamp of the first packet in the outer session (not logged).
 # Tmp-Integer-1 is the total elapsed time of the outer session, in ms.
-# Tmp-Integer-2 is the count of received packets in the outer session.
+# Tmp-Integer-2 is the count of requests in the outer session (Req-Count).
 
 # Sending an Access-Accept
 # Expect to see inner + outer results when debugging, else just the outer result
@@ -26,7 +26,7 @@ linelog linelog_send_accept {
  NAS-IP-Address=%{NAS-IP-Address},\
  Client-IP-Address=%{Client-IP-Address},\
  Elapsed-Ms=%{session-state:Tmp-Integer-1},\
- Recv-Pkt-Count=%{session-state:Tmp-Integer-2}\
+ Req-Count=%{session-state:Tmp-Integer-2}\
 "
 }
 
@@ -44,7 +44,7 @@ linelog linelog_send_cached_accept {
  NAS-IP-Address=%{NAS-IP-Address},\
  Client-IP-Address=%{Client-IP-Address},\
  Elapsed-Ms=%{session-state:Tmp-Integer-1},\
- Recv-Pkt-Count=%{session-state:Tmp-Integer-2}\
+ Req-Count=%{session-state:Tmp-Integer-2}\
 "
 }
 
@@ -65,7 +65,7 @@ linelog linelog_send_reject {
  Module-Failure=\"%{Module-Failure-Message}\",\
  Inner-Failure=\"%{session-state:Tmp-String-1}\",\
  Elapsed-Ms=%{session-state:Tmp-Integer-1},\
- Recv-Pkt-Count=%{session-state:Tmp-Integer-2}\
+ Req-Count=%{session-state:Tmp-Integer-2}\
 "
 }
 
@@ -85,7 +85,7 @@ linelog linelog_send_cached_reject {
  Module-Failure=\"%{Module-Failure-Message}\",\
  Inner-Failure=\"%{session-state:Tmp-String-1}\",\
  Elapsed-Ms=%{session-state:Tmp-Integer-1},\
- Recv-Pkt-Count=%{session-state:Tmp-Integer-2}\
+ Req-Count=%{session-state:Tmp-Integer-2}\
 "
 }
 

@@ -10,3 +10,9 @@
 # Don't publish TODO docs
 TODO.*
 *.TODO
+# Ignore local env and compose files; delivered examples will end in .example
+*compose.yml
+*compose.yaml
+*.env
+# Ignore persistent container data
+vols/

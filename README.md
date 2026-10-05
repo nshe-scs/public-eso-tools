@@ -7,7 +7,7 @@ Free, rapidly-deployable and repeatable, reasonably secure by default, and pre-c
   - [Why?](#why)
   - [Setup](#setup)
     - [eduroam registration](#eduroam-registration)
-    - [Container hosting](#container-hosting)
+    - [Container hosting and naming](#container-hosting-and-naming)
     - [Bootstrap CA script](#bootstrap-ca-script)
     - [Wireless profile](#wireless-profile)
     - [Identity source options](#identity-source-options)
@@ -31,10 +31,14 @@ There are numerous examples of valid eduroam configs in the wild. Many are so ge
 ## eduroam registration
 We assume you're a US-based [eduroam Support Organization (eSO)](https://incommon.org/eduroam/eduroam-k12-libraries-museums/), but you can also host this directly as a school, school district, multi-district IT services unit, EDU-focused contractor, a community college... In any case, you must be able to register an IdP and/or SP in the eduroam infrastructure (you can test locally, but roaming won't work unless you're registered). US-based organizations do this via Internet2's Federation Manager tool; if you don't know what that is, reach out to Internet2 or your state's eSO.
 
-## Container hosting
-You'll need to be able to host a container. Podman and Docker are common, well documented, and relatively easy to install on a Linux VM or a tiny PC. You'll need to be able to reboot the container on a schedule or be in the habit of redeploying so you get the latest security updates from the upstream FreeRADIUS container.
+## Container hosting and naming
+You'll need to be able to host a container. Podman and Docker are common, well documented, and relatively easy to install on a Linux VM or a tiny PC. You'll need to be able to reboot the container on a schedule or be in the habit of redeploying so you get the latest security updates from the upstream FreeRADIUS container (see [Updating](#updating) below).
 
-If you're an eSO, we suggest following a repeatable DNS pattern like `(constituent).roam.(your-eso-domain)`, e.g. `a.roam.example.org`, `b.roam.example.org`, `c.roam.example.org`, etc. Your constituents' users would then authenticate as `foo@a.roam.example.org`. This should also make orchestration easier if you want to build a repeatable workflow for many constituents.
+If you're an eSO, we suggest following a repeatable pattern like `(constituent).roam.(your-eso-domain)`, e.g. `a.roam.example.org`, `b.roam.example.org`, `c.roam.example.org`, etc. when selecting a value for `FR_IDP_FQDN`. This is the name the container will use for its TLS certificate and must be specified in wireless profiles so clients can know whether they're talking to the correct server. You may want to use the same value for `FR_IDP_REALM`, which is the realm (domain name) registered in the eduroam infrastructure so roaming authentication requests can be routed to the container. For example, if `FR_IDP_REALM` is `a.roam.example.org`, users would authenticate as `foo@a.roam.example.org`. This should also make orchestration easier if you want to build a repeatable workflow for many constituents.
+
+If you are hosting this as an individual district or school, we recommend something more familiar to your users, like your school's email suffix.
+
+If a constituent has discrete identity sources for students vs. faculty/staff/teachers, e.g. two different Google Workspace tenants, different AD domains, etc., we recommend running two containers (e.g. `students.a.roam.example.org` and `staff.a.roam.example.org`.
 
 ## Bootstrap CA script
 You'll need to run the provided `bootstrap-ca.sh` bash script on a Linux system, and hang on to its output before you can start your container for the first time. This only needs to be done once per constituent, and the resulting CA certificate is valid for 20 years. The container will use this cert to generate its own short-lived certs whenever it starts, and because clients will be told to trust the private cert only for eduroam, you won't need to worry about ever-shortening public cert lifetimes.
@@ -61,13 +65,53 @@ If you're using Active Directory but not protecting LDAP communication with a ce
 ### Google Secure LDAP
 Google does LDAPS a little differently than AD and has a query rate limit, so we treat it differently. If your Google Workspace tenant does not already have the Secure LDAP service enabled, you will need to enable it from the tenant's admin portal. You'll need to create an "LDAP client", which is really a client cert + key for the container to authenticate to Google over LDAPS, and "access credentials", which are an auto-generated username and passphrase used in conjunction with the client cert + key. You'll also need to allow the LDAP client to read basic user information from your tenant, and note the OU and (optional) group your eduroam users reside in.
 
-# Building and running the container
-Build and run it as you typically would with the supplied `Dockerfile` and/or `docker-compose.yml`. We tested with `docker-compose` for convenience, but you could use other methods. For example:
+### Let's Wi-Fi (EAP-TLS client certificates from an eso-letswifi portal)
+Users enroll each device at an [eso-letswifi](https://github.com/nshe-scs/public-eso-letswifi) portal, which signs them in through their institution's own SSO and installs a personal client certificate. Devices then authenticate with EAP-TLS instead of a username and password, so there's no password to phish or forget, and no identity backend for this container to talk to.
+
+To deploy the portal and switch your IdPs to it, see the [Let's Wi-Fi production guide](https://github.com/nshe-scs/public-eso-letswifi/blob/HEAD/docs/production-guide.md).
+
+To get the value for `FR_LETSWIFI_CA_CERT_BASE64`, run `realm-ca-cert.py <FR_IDP_REALM>` on the eso-letswifi portal host and paste the line it prints. In the portal, the institution's realm must use this container's `FR_IDP_REALM`, its `--server-name` must be this container's `FR_IDP_FQDN`, and its `--trust` must be the CA in `FR_TLS_CA_CERT_BASE64`.
+
+Certs revoked in the portal must stop working here too. The container host (not the container) pulls the realm's revocation list from the portal into `./vols/revocations` every minute with `letswifi/fetch-revocations.py`, using `FR_IDP_REALM` and `FR_LETSWIFI_REVOCATIONS_URL` from this container's `custom.env`. New revocations take effect within a couple of minutes. If no list is mounted, the container still starts but warns that revoked certs will be accepted, and a missing or unreadable list never blocks logins. The portal side is described in eso-letswifi's `revocations/README.md`; it must allow this host's IP address in `LETSWIFI_REVOCATION_CLIENTS`.
+
+To set it up, install the systemd units once per host, then start a timer for each container. The timer's name encodes the container's directory, so let `systemd-escape` build it:
 ```
-mkdir /opt/constituent-a && cd /opt/constituent-a
+# Once per host, from any copy of this repo
+cp freeradius-idp-container/letswifi/letswifi-revocations-fetch@.* /etc/systemd/system/
+systemctl daemon-reload
+
+# For each container, from its directory (where its docker-compose.yml and custom.env are)
+vim custom.env # set FR_LETSWIFI_REVOCATIONS_URL
+mkdir -p vols/revocations
+timer=$(systemd-escape --path --template letswifi-revocations-fetch@.timer "$PWD")
+systemctl enable --now "$timer"
+journalctl -u "${timer%.timer}.service" -n 5 # expect "installed export ..."; later runs say "not modified"
+vim docker-compose.yml # uncomment volumes: and the ./vols/revocations line
+docker compose down && docker compose up -d # startup log shows "Revocation list for '<realm>': ..."
+```
+Each timer runs the `fetch-revocations.py` in its own container's directory, so updating that container's copy of this repo updates its fetcher too. `systemctl list-timers 'letswifi-revocations-fetch@*'` lists every timer on the host.
+
+After changing a realm's root CA in the portal, run `realm-ca-cert.py` again: it includes both CAs until certs signed by the old one have expired or been revoked.
+
+# Building and running the container
+Build and run it as you typically would with the supplied `Dockerfile`, and a `docker-compose.yml` and `custom.env` that you'll modify based on the supplied `docker-compose.yml.example` and `custom.env.example`. We tested with `docker compose` for convenience, but you could use other methods.
+
+For example:
+```
+# First time setup
+mkdir /opt/constituent-a
+cd /opt/constituent-a
 git clone https://github.com/nshe-scs/public-eso-tools
+cd public-eso-tools/freeradius-idp-container
+./bootstrap-ca.sh # store the output in a safe place, e.g. your organization's secrets vault / password manager
+
+# Configure the container
+cp docker-compose.yml.example docker-compose.yml
 vim docker-compose.yml # set the desired container name, IP/port mapping, etc.
-vim custom.env # set your env vars to configure everything - see next section
+cp custom.env.example custom.env
+vim custom.env # set your env vars to configure everything, e.g. identity source, eduroam registration settings, logging (see next section)
+
+# Build and start the container
 docker compose up --build -d
 docker compose logs -f # make sure the container started correctly and is waiting for requests
 ```
@@ -81,6 +125,20 @@ Anyone operating an eduroam IdP or SP is required to keep sufficient logs for tr
 We provide two options that are less verbose than the debug level console output, but are still useful for investigating and troubleshooting, and we include a `Correlation-Id` field in the log entries to help you grep and follow individual EAP sessions.
 
 If you have a remote syslog host or SIEM tool, use it. Take advantage of its collection, searching, and compression capabilities. If you don't have a syslog receiver of some sort, the container can log to a file instead (`/var/log/freeradius/eduroam.log`) but you must persistently map / bind `/var/log/freeradius` to a volume on your container host or the log will disappear when the container stops. It's up to you to rotate and trim the log; the container won't do it for you.
+
+Keep logs for at least eduroam's minimum retention period (six months for eduroam-US). For example, in `/etc/logrotate.d/eso-tools` on the container host (list each container's log, or use a wildcard):
+```
+/path/to/public-eso-tools/freeradius-idp-container/vols/log/eduroam.log {
+    daily
+    rotate 190
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+```
+`copytruncate` keeps FreeRADIUS writing to the same file; `rotate 190` keeps just over six months. Test it with `logrotate -f /etc/logrotate.d/eso-tools`; on SELinux hosts, the volume's label may block logrotate.
 
 # About LDAP certificates
 Strict LDAP certificate checking ensures that the authentication traffic between the container and the constituent's auth backend are encrypted in transit and only sent to the constituent's own LDAP server(s), not a clever adversary.
@@ -103,13 +161,30 @@ Double-click any intermediate certs, causing a new certificate properties window
 If there is exactly one certificate, the DC is likely using an individual self-signed certificate and you cannot securely communicate to it with this container. Ask a Domain Admin (or their consultant...) to configure AD to enable secure LDAP connections with a certificate issued by a private Certificate Authority (CA) such as AD Certificate Services. There is no need to pay a public CA for certs for your DCs and it will likely introduce exciting new problems down the road.
 
 # Updating
-If you eat, live, and breathe containers, this is old hat for you. For the rest of us... well...
-
 We use the latest official Alpine-based FreeRADIUS container, add the sqlite and openssl packages, and copy our eduroam-US friendly config files over at container build time. We then apply actual configuration details during run time. Thus, you can destroy and rebuild the container every day and it will work the same way every time, as long as your config is the same (e.g. the set of environmental variables you feed your automation/orchestration tools).
 
-Security updates: pull and rebuild the container image, stop the currently-running container, start a new one.
+To only update the base container image and FreeRADIUS, e.g. if you just want to keep your containers patched and aren't interested in bug fixes or new features from this project: simply pull and rebuild the container image, stop the container, and start a new one (see "Rebuild and restart the container" in the example below).
 
-Updating to the newest release of this project: back up your old `custom.env`, `docker-compose.yml`, and (if you aren't using syslog) log file. Clone this repo/project from GitHub like you're doing a fresh install, and copy the backed-up files over before rebuilding/starting the container.
+To update everything, including grabbing the latest release of this project (rarely necessary - please check the release notes before updating), pull the latest code and rebuild. Your `custom.env`, `docker-compose.yml` and `vols/` aren't tracked by git, so a pull leaves them alone, but it never hurts to take a backup! Upgrading from v1.x? Follow the upgrade steps in the v2.0.0 release notes instead: v2 renamed the container directory.
+
+Example (e.g. "Constituent A"):
+```
+# Back up config + any persistent volumes just in case something goes awry
+cd /opt/constituent-a
+tar cjf constituent-a.bak.tar.bz2 -C public-eso-tools/freeradius-idp-container custom.env docker-compose.yml vols/
+
+# Get the latest project code
+git -C public-eso-tools pull
+
+# Rebuild and restart the container
+cd /opt/constituent-a/public-eso-tools/freeradius-idp-container
+docker compose build --pull # pull the latest base image and incorporate this project's customizations
+docker compose down # stop the running container
+docker compose up -d # start the container and detach it from the console so you can keep working
+docker compose logs -f # view the container's output to make sure it started correctly and is waiting for requests
+```
+
+To automate your updates, schedule them with cron, systemd, or a fancy orchestration tool of your choice.
 
 # Further reading
 

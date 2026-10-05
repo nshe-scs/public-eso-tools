@@ -1,0 +1,24 @@
+# Read-only lookups in the Let's Wi-Fi revocation list at /revocations (see README)
+
+sql sql_letswifi {
+    dialect = "sqlite"
+    driver = "rlm_sql_${dialect}"
+    sqlite {
+        filename = "/revocations/revoked.sqlite"
+        busy_timeout = 200
+    }
+    read_clients = no
+    pool {
+        # Don't connect at startup, so a missing list can't stop radiusd from starting
+        start = 0
+        min = 0
+        max = 4
+        spare = 1
+        uses = 0
+        retry_delay = 30
+        # The list gets replaced (not modified) when it changes; reconnect to pick up the new one
+        lifetime = 60
+        idle_timeout = 30
+        max_retries = 1
+    }
+}

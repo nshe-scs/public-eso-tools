@@ -1,0 +1,18 @@
+# Pulls the Let's Wi-Fi revocation list for one eso-tools container. The instance name is the container's
+# directory (where its docker-compose.yml and custom.env are), path-escaped; see README for setup.
+# The realm and portal URL come from its custom.env; the list goes in its ./vols/revocations.
+[Unit]
+Description=Pull eso-letswifi revocations for %f
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %f/letswifi/fetch-revocations.py --container-dir %f
+TimeoutStartSec=5min
+# Least privilege: everything read-only except this container's vols/revocations directory
+ProtectSystem=strict
+ReadWritePaths=-%f/vols/revocations
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
