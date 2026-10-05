@@ -8,7 +8,7 @@
 # inspect/update the local user DB even when the container isn't running.
 
 # See https://hub.docker.com/r/freeradius/freeradius-server/
-FROM freeradius/freeradius-server:latest-3.2-alpine
+FROM docker.io/freeradius/freeradius-server:latest-3.2-alpine
 
 # Add packages:
 #  sqlite: for checking or making changes to the local DB from within the container

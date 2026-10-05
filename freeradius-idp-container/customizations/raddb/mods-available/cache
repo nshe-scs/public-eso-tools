@@ -17,3 +17,24 @@ cache cache_auth {
         control:Tmp-String-2 := "%{control:Tmp-String-2}"
     }
 }
+
+# Keeps session-state (Tmp-Integer-0, Tmp-String-0, Tmp-Integer-2) across a proxied (visitor) EAP
+# session. FreeRADIUS can't restore session-state for proxied sessions, since the home server sets
+# State. So post-proxy saves it under the State in each Access-Challenge, and authorize restores it
+# from the State in the next packet. Values come back via control, since rlm_cache moves (rather
+# than copies) cached session-state.
+cache cache_proxy_session {
+    driver = "rlm_cache_rbtree"
+
+    # State from the home server (post-proxy) or from the client (authorize)
+    key = "%{%{control:State}:-%{State}}"
+
+    # Matches the default EAP session timeout
+    ttl = 60
+
+    update {
+        control:Tmp-Integer-0 := &session-state:Tmp-Integer-0
+        control:Tmp-String-0 := &session-state:Tmp-String-0
+        control:Tmp-Integer-2 := &session-state:Tmp-Integer-2
+    }
+}

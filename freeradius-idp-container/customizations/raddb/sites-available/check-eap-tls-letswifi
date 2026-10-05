@@ -1,0 +1,39 @@
+# Only link this config if using letswifi
+# Accept or reject client certs that already passed TLS checks (signed by FR_LETSWIFI_CA_CERT_BASE64, unexpired)
+
+server check-eap-tls-letswifi {
+    authorize {
+        # Log the cert's identity like an inner identity would be, i.e. without the realm
+        if (&TLS-Client-Cert-Common-Name =~ /^([^@]+)@/) {
+            update outer.session-state {
+                Stripped-User-Name := "%{1}"
+            }
+        }
+
+        # The outer identity must be the cert's CN, which Let's Wi-Fi profiles always send
+        if (&TLS-Client-Cert-Common-Name != &outer.request:User-Name) {
+            update outer.session-state {
+                Tmp-String-1 := "cert CN doesn't match outer identity"
+            }
+            update control {
+                Auth-Type := Reject
+            }
+            return
+        }
+
+        # Reject certs revoked in the portal; fail open if the list is missing or unreadable
+        if ("%{sql_letswifi:SELECT COUNT(*) FROM revoked WHERE ident = '%{TLS-Client-Cert-Common-Name}'}" == "1") {
+            update outer.session-state {
+                Tmp-String-1 := "cert revoked in Let's Wi-Fi portal"
+            }
+            update control {
+                Auth-Type := Reject
+            }
+            return
+        }
+
+        update control {
+            Auth-Type := Accept
+        }
+    }
+}

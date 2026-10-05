@@ -187,10 +187,10 @@ done
 
 # Sanity check for identity source
 case "$FR_IDENTITY_SOURCE" in
-  ldap|google|sql)
+  ldap|google|sql|letswifi)
     echo "Configuring identity source '$FR_IDENTITY_SOURCE'..." ;;
   *)
-    echo "ERROR: FR_IDENTITY_SOURCE must be 'ldap', 'google', or 'sql'." && exit 1 ;;
+    echo "ERROR: FR_IDENTITY_SOURCE must be 'ldap', 'google', 'sql', or 'letswifi'." && exit 1 ;;
 esac
 
 
@@ -206,18 +206,18 @@ if [ "$FR_IDENTITY_SOURCE" = "google" ] || [ "$FR_IDENTITY_SOURCE" = "ldap" ]; t
     rm "$fr_conf_path/mods-available"/ldap-ad-*
 
     # Instead of worrying about CA certs, we need Google's LDAP Client cert/key
-    if [ -n "$FR_LDAP_BIND_GOO_CERT" ] && [ "$FR_LDAP_BIND_GOO_KEY" ]; then
+    if [ -n "$FR_LDAP_BIND_GOO_CERT_BASE64" ] && [ "$FR_LDAP_BIND_GOO_KEY_BASE64" ]; then
       FR_LDAP_SECURITY="ldaps"
       FR_LDAP_HOST_FQDN="ldap.google.com"
     else
-      echo "ERROR: FR_LDAP_BIND_GOO_CERT and FR_LDAP_BIND_GOO_KEY are both required."
+      echo "ERROR: FR_LDAP_BIND_GOO_CERT_BASE64 and FR_LDAP_BIND_GOO_KEY_BASE64 are both required."
       exit 1
     fi
 
     # Dump Google cert + key pair, remove non-Google ldap confs
     echo "Installing provided Google cert + key to $fr_cert_path..."
-    echo $FR_LDAP_BIND_GOO_CERT | base64 -d > "$fr_cert_path/google.pem"
-    echo $FR_LDAP_BIND_GOO_KEY | base64 -d > "$fr_cert_path/google.key"
+    echo $FR_LDAP_BIND_GOO_CERT_BASE64 | base64 -d > "$fr_cert_path/google.pem"
+    echo $FR_LDAP_BIND_GOO_KEY_BASE64 | base64 -d > "$fr_cert_path/google.key"
     openssl x509 -in "$fr_cert_path/google.pem" -noout -subject -serial -enddate
     echo "*** You MUST renew your Google LDAP Client cert before it expires; you've set a calendar reminder, right? ***"
   else
@@ -338,6 +338,66 @@ elif [ "$FR_IDENTITY_SOURCE" = "sql" ]; then
   # Enable the sql mod
   cd "$fr_conf_path/mods-enabled"
   ln -sf ../mods-available/sql sql
+elif [ "$FR_IDENTITY_SOURCE" = "letswifi" ]; then
+  echo "Setting up Let's Wi-Fi (EAP-TLS) identity source..."
+
+  # Client certs must be signed by one of these Let's Wi-Fi root CA certs
+  if [ -z "$FR_LETSWIFI_CA_CERT_BASE64" ]; then
+    echo "ERROR: Let's Wi-Fi requires env var 'FR_LETSWIFI_CA_CERT_BASE64'."
+    exit 1
+  fi
+  echo "Installing provided Let's Wi-Fi root CA cert(s) to $fr_cert_path..."
+  echo "$FR_LETSWIFI_CA_CERT_BASE64" | base64 -d > "$fr_cert_path/letswifi-ca.pem"
+  if grep -q 'PRIVATE KEY' "$fr_cert_path/letswifi-ca.pem"; then
+    rm -f "$fr_cert_path/letswifi-ca.pem"
+    echo "ERROR: FR_LETSWIFI_CA_CERT_BASE64 contains a private key. Supply only the CA certificate."
+    exit 1
+  fi
+  if ! openssl x509 -in "$fr_cert_path/letswifi-ca.pem" -noout -subject -serial -enddate; then
+    echo "ERROR: FR_LETSWIFI_CA_CERT_BASE64 doesn't contain a PEM certificate."
+    exit 1
+  fi
+  num_lw_cas=$(grep -c 'BEGIN CERTIFICATE' "$fr_cert_path/letswifi-ca.pem")
+  echo "Will accept client certs signed by $num_lw_cas Let's Wi-Fi root CA cert(s)."
+
+  # Not used by the container itself, but the container host needs it to pull revocation lists
+  case "$FR_LETSWIFI_REVOCATIONS_URL" in
+    https://*)
+      echo "Container host will pull revocation lists from '$FR_LETSWIFI_REVOCATIONS_URL'." ;;
+    "")
+      echo "ERROR: Let's Wi-Fi requires env var 'FR_LETSWIFI_REVOCATIONS_URL' (see README)."
+      exit 1 ;;
+    *)
+      echo "ERROR: FR_LETSWIFI_REVOCATIONS_URL must start with https://."
+      exit 1 ;;
+  esac
+
+  # EAP-TLS instead of EAP-TTLS; no inner tunnel, just a revocation check
+  cd "$fr_conf_path/mods-enabled"
+  ln -sf ../mods-available/eap-letswifi eap
+  ln -sf ../mods-available/sql-letswifi sql_letswifi
+  cd "$fr_conf_path/sites-enabled"
+  rm -f inner-tunnel
+  ln -sf ../sites-available/check-eap-tls-letswifi check-eap-tls-letswifi
+
+  # The container host pulls the revocation list from the portal; we just read it
+  lw_revoked=/revocations/revoked.sqlite
+  if [ -f "$lw_revoked" ]; then
+    lw_realm=$(sqlite3 -readonly "$lw_revoked" "SELECT value FROM meta WHERE key = 'realm';" 2>/dev/null || true)
+    if [ -z "$lw_realm" ]; then
+      echo "ERROR: '$lw_revoked' isn't a readable Let's Wi-Fi revocation list."
+      exit 1
+    fi
+    if [ "$lw_realm" != "$FR_IDP_REALM" ]; then
+      echo "ERROR: '$lw_revoked' is the revocation list for realm '$lw_realm', not '$FR_IDP_REALM' (see README)."
+      exit 1
+    fi
+    lw_count=$(sqlite3 -readonly "$lw_revoked" "SELECT value FROM meta WHERE key = 'revoked_count';")
+    lw_generated=$(sqlite3 -readonly "$lw_revoked" "SELECT value FROM meta WHERE key = 'generated_at';")
+    echo "Revocation list for '$lw_realm': $lw_count revoked cert(s), generated $lw_generated UTC."
+  else
+    echo "*** WARNING: No Let's Wi-Fi revocation list at '$lw_revoked'. Certs revoked in the portal will still be accepted until the container host installs one (see README). ***"
+  fi
 fi
 echo "Done setting up identity source."
 

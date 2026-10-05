@@ -22,6 +22,24 @@ server eduroam {
     }
 
     authorize {
+        # Restore session-state saved in post-proxy for visitors (see mods-available/cache)
+        if (&State && !&session-state:Tmp-Integer-0) {
+            update control {
+                Cache-Read-Only := yes
+            }
+            cache_proxy_session {
+                fail = 1
+                invalid = 1
+            }
+            if (&control:Tmp-Integer-0) {
+                update session-state {
+                    Tmp-Integer-0 := &control:Tmp-Integer-0
+                    Tmp-String-0 := &control:Tmp-String-0
+                    Tmp-Integer-2 := &control:Tmp-Integer-2
+                }
+            }
+        }
+
         # Some work just for the very first packet in the session:
         # Store a session start timestamp (Tmp-Integer-0) so we can figure out
         # the total elapsed session time (Tmp-Integer-1) later; and a random-ish
@@ -38,7 +56,7 @@ server eduroam {
             Tmp-String-0 := "%{session-state:Tmp-String-0}"
         }
 
-        # Count packets (Tmp-Integer-2) for logging later at the final accept/reject
+        # Count requests (Tmp-Integer-2) for logging later at the final accept/reject
         update session-state {
             Tmp-Integer-2 := "%{expr:%{%{session-state:Tmp-Integer-2}:-0} + 1}"
         }
@@ -89,6 +107,19 @@ server eduroam {
     post-proxy {
         attr_filter.post-proxy
         linelog_recv_proxy_response
+
+        # Save session-state for the next packet in the session (see mods-available/cache)
+        # A negative TTL replaces any entry the home server's State would otherwise reuse
+        if (&proxy-reply:Packet-Type == Access-Challenge && &proxy-reply:State) {
+            update control {
+                State := &proxy-reply:State
+                Cache-TTL := -60
+            }
+            cache_proxy_session {
+                fail = 1
+                invalid = 1
+            }
+        }
  
         # Let rlm_proxy_rate_limit update its cache
         proxy_rate_limit
@@ -121,7 +152,7 @@ server eduroam {
             update session-state { Tmp-Integer-1 := "%{expr:(%c*1000 + %C/1000) - %{session-state:Tmp-Integer-0}}" }
         }
 
-        if(&session-state:Tmp-String-3 == "hit") {
+        if(&session-state:Tmp-String-3 && &session-state:Tmp-String-3 == "hit") {
             linelog_send_cached_accept
         } else {
             linelog_send_accept
@@ -134,7 +165,7 @@ server eduroam {
             if (&session-state:Tmp-Integer-0){
                 update session-state { Tmp-Integer-1 := "%{expr:(%c*1000 + %C/1000) - %{session-state:Tmp-Integer-0}}" }
             }
-            if(&session-state:Tmp-String-3 == "hit") {
+            if(&session-state:Tmp-String-3 && &session-state:Tmp-String-3 == "hit") {
                 linelog_send_cached_reject
             } else {
                 linelog_send_reject

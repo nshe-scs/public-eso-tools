@@ -1,0 +1,12 @@
+# Checks for a new Let's Wi-Fi revocation list every minute (unchanged lists cost a 304).
+# Instance name: see letswifi-revocations-fetch@.service.
+[Unit]
+Description=Pull eso-letswifi revocations for %f every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+RandomizedDelaySec=15s
+
+[Install]
+WantedBy=timers.target

@@ -3,11 +3,11 @@
 
 services:
   freeradius:
-    container_name: fr-ttls-pap
+    container_name: fr-idp-shortnamehere
     build:
       context: .
       dockerfile: Dockerfile
-    hostname: fr-ttls-pap
+    hostname: fr-idp-shortnamehere
     ports:
       # If you are hosting multiple containers, change the default below to the next available UDP
       # port that you aren't already using. A reverse proxy like traefik can also solve this for you
@@ -19,10 +19,15 @@ services:
       TZ: 'America/Los_Angeles'
     # You must modify the values in custom.env; see README for more info.
     env_file: ./custom.env
+    # If you need logs, certificate revocation lists, or a sqlite DB to survive after the container stops
+    # running, uncomment the next line and one or more of the following.
     #volumes:
       # Uncomment to persist this if you're using sqlite instead of an external auth source:
       #- './vols/sqlite/:/db'
       # Uncomment to persist this if you aren't shipping syslogs to another host (syslog is best):
       #- './vols/log/:/var/log/freeradius'
+      # Uncomment if FR_IDENTITY_SOURCE=letswifi: the revocation list, pulled into ./vols/revocations by the
+      # container host (see the Let's Wi-Fi section of README.md):
+      #- './vols/revocations/:/revocations:Z,ro'
     # Use "no" to avoid a boot loop if you're still testing, otherwise use unless-stopped or always.
     restart: "no"
